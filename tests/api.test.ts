@@ -27,7 +27,7 @@ const config = loadConfig({
   TRIAL_DAYS: '30',
   TELEGRAM_ADMIN_CHAT_ID: '12345',
 } as NodeJS.ProcessEnv);
-const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: (t: string) => void sent.push(t) } });
+const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: async (t: string) => void sent.push(t) } });
 const login = (token: string, body: object = {}) => request(app).post('/auth/session').set('authorization', `Bearer ${token}`).send(body);
 
 beforeAll(async () => {

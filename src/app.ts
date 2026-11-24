@@ -154,7 +154,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
       )) as unknown as UserDoc;
       created = true;
       const link = config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${user.accountId}` : '';
-      telegram.notify(`🆕 নতুন অ্যাকাউন্ট: ${user.accountId}\n${email}${referredBy ? `\nরেফারেল: ${code}` : ''}${link}`, s.telegramChatIds);
+      await telegram.notify(`🆕 নতুন অ্যাকাউন্ট: ${user.accountId}\n${email}${referredBy ? `\nরেফারেল: ${code}` : ''}${link}`, s.telegramChatIds);
     } else {
       if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে।' });
       user.lastSeenAt = new Date();

@@ -15,8 +15,18 @@ npm test                # API tests (in-memory MongoDB, fake tokens; no internet
 ```
 
 ## Production
-`npm run build && npm start`. Host on Render, Railway or a VPS (not Vercel). Set the same variables
-as in `.env` in the host's settings. Add the production frontend URL to `CORS_ORIGINS`.
+
+**Free start: Vercel** (a separate Vercel project for this repo)
+- `api/index.ts` is a serverless function and `vercel.json` sends every path to it, so there's no sleeping server.
+- Steps:
+  1. Vercel → Add New → Project → import this repo (no build settings needed).
+  2. Add every variable from `.env` in Settings → Environment Variables.
+  3. Deploy, then open `https://<project>.vercel.app/health`.
+  4. Put that URL in the frontend's `NEXT_PUBLIC_API_URL` (Vercel env of jomarKhata-fe) and add the frontend URL to `CORS_ORIGINS` here.
+- MongoDB Atlas → Network Access: allow `0.0.0.0/0`, because Vercel has no fixed IP.
+- Note: the Vercel Hobby plan is for non-commercial use. When the app earns, move to Vercel Pro or a small server.
+
+**Any normal server** (Render, Railway, a VPS): run `npm run build && npm start` (entry: `src/index.ts`) with the same variables.
 
 ## Environment (.env)
 | Variable | Where to get it |
