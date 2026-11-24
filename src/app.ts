@@ -24,6 +24,7 @@ import type { Telegram } from './lib/telegram.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
 import { canAddReferral, publicUser, User, type UserDoc } from './models/User.js';
 import { registerAdminRoutes, subscriptionStatus } from './routes/admin.js';
+import { registerPaymentRoutes } from './routes/payments.js';
 
 /** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
 export interface VerifiedToken {
@@ -64,6 +65,10 @@ const settingsInput = z
     referralRate: z.number().min(0).max(1),
     paymentNumbers: z.object({ bkash: z.string().max(40), nagad: z.string().max(40), bank: z.string().max(200) }).partial(),
     telegramChatIds: z.array(z.string().trim().regex(TELEGRAM_CHAT_ID, 'Telegram chat ID সংখ্যা হতে হবে')).max(10),
+    plans: z
+      .array(z.object({ key: z.string().trim().min(1).max(20), label: z.string().trim().min(1).max(40), days: z.number().int().min(1).max(3650), price: z.number().min(0).max(1_000_000) }))
+      .min(1)
+      .max(10),
   })
   .partial();
 
@@ -117,7 +122,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   app.get('/config', async (_req, res) => {
     const s = await settings();
     res.set('cache-control', 'public, max-age=300');
-    res.json({ supportWhatsApp: s.supportWhatsApp, trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers });
+    res.json({ supportWhatsApp: s.supportWhatsApp, trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers, plans: s.plans });
   });
 
   app.post('/auth/session', requireToken, async (req: AuthedRequest, res) => {
@@ -219,6 +224,12 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     };
     await Settings.updateOne({ _id: 'global' }, { $set: { ...next, updatedBy: req.user!.email } }, { upsert: true });
     res.json({ settings: next });
+  });
+
+  registerPaymentRoutes(app, [requireToken, requireUser] as never, [requireToken, requireUser, requireSuperAdmin] as never, {
+    telegram,
+    settings,
+    adminUrl: config.ADMIN_URL,
   });
 
   registerAdminRoutes(app, [requireToken, requireUser, requireSuperAdmin] as never, {

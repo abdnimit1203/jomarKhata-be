@@ -215,3 +215,48 @@ describe('admin: users & subscriptions', () => {
     expect((await request(app).post(`/admin/users/${own.body.user.accountId}/status`).set(admin).send({ status: 'blocked' })).status).toBe(400);
   });
 });
+
+describe('payments: request → approve / reject', () => {
+  const admin = { authorization: 'Bearer own|owner@example.com' };
+  beforeEach(async () => {
+    await mongoose.connection.collection('paymentrequests').deleteMany({});
+    await mongoose.connection.collection('settings').deleteMany({});
+  });
+
+  it('user submits (price from server plans), duplicate TrxID refused, admin approves once → +days, Telegram', async () => {
+    await login('own|owner@example.com');
+    const u = await login('p1|pay@example.com');
+    const auth = { authorization: 'Bearer p1|pay@example.com' };
+    const cfg = await request(app).get('/config');
+    expect(cfg.body.plans.map((p: { key: string }) => p.key)).toEqual(['1m', '6m', '12m']);
+    const r = await request(app).post('/me/payments').set(auth).send({ plan: '6m', method: 'bkash', trxId: 'trx9abc', amount: 1 });
+    expect(r.status).toBe(201);
+    expect(r.body.request).toMatchObject({ amount: 999, days: 180, trxId: 'TRX9ABC', status: 'pending' }); // client "amount" ignored
+    expect(sent.some((t) => t.includes('নতুন পেমেন্ট রিকোয়েস্ট'))).toBe(true);
+    expect((await request(app).post('/me/payments').set(auth).send({ plan: '1m', method: 'bkash', trxId: 'TRX9ABC' })).status).toBe(409);
+
+    const list = await request(app).get('/admin/payments').set(admin);
+    expect(list.body.pending).toBe(1);
+    const id = list.body.requests[0]._id;
+    const before = Date.parse(u.body.user.subscription.expiresAt);
+    const ok = await request(app).post(`/admin/payments/${id}/approve`).set(admin);
+    expect(ok.status).toBe(200);
+    expect((await request(app).post(`/admin/payments/${id}/approve`).set(admin)).status).toBe(409); // no double extend
+    const me = await request(app).get('/me').set(auth);
+    expect(Math.round((Date.parse(me.body.user.subscription.expiresAt) - before) / 86_400_000)).toBe(180);
+    expect(me.body.user.subscription.status).toBe('active');
+  });
+
+  it('reject needs a reason; non-admin cannot list', async () => {
+    await login('own|owner@example.com');
+    await login('p2|pay2@example.com');
+    const auth = { authorization: 'Bearer p2|pay2@example.com' };
+    const r = await request(app).post('/me/payments').set(auth).send({ plan: '1m', method: 'nagad', trxId: 'NG12345' });
+    expect((await request(app).get('/admin/payments').set(auth)).status).toBe(403);
+    expect((await request(app).post(`/admin/payments/${r.body.request._id}/reject`).set(admin).send({})).status).toBe(400);
+    const rej = await request(app).post(`/admin/payments/${r.body.request._id}/reject`).set(admin).send({ reason: 'TrxID মেলেনি' });
+    expect(rej.body.request.status).toBe('rejected');
+    const mine = await request(app).get('/me/payments').set(auth);
+    expect(mine.body.requests[0]).toMatchObject({ status: 'rejected', reason: 'TrxID মেলেনি' });
+  });
+});

@@ -40,6 +40,24 @@ function row(u: UserDoc) {
   };
 }
 
+/**
+ * Extend a subscription by `days`, ON TOP of the remaining time (nobody loses paid days), and log it.
+ * Shared by the manual admin action and payment approval.
+ */
+export async function extendSubscription(
+  u: UserDoc,
+  days: number,
+  plan: string,
+  by: string,
+  extra: { amount?: number; method?: string; trxId?: string; note?: string } = {},
+): Promise<Date> {
+  const before = u.subscription.expiresAt;
+  const after = new Date(Math.max(Date.now(), before.getTime()) + days * DAY);
+  await User.updateOne({ _id: u._id }, { $set: { 'subscription.expiresAt': after, 'subscription.status': 'active', 'subscription.plan': plan } });
+  await SubscriptionLog.create({ userId: u._id, accountId: u.accountId, action: 'extend', plan, days, before, after, ...extra, by });
+  return after;
+}
+
 const subscriptionInput = z.discriminatedUnion('action', [
   z.object({ action: z.literal('extend'), days: z.number().int().min(1).max(3650), plan: z.string().max(40).default('paid') }),
   z.object({ action: z.literal('set_date'), expiresAt: z.coerce.date(), plan: z.string().max(40).default('paid') }),
@@ -116,16 +134,18 @@ export function registerAdminRoutes(
     if (!u) return res.status(404).json({ error: 'not_found', message: 'ইউজার পাওয়া যায়নি।' });
 
     const before = u.subscription.expiresAt;
+    const adminEmail = (req as unknown as { user: UserDoc }).user.email;
+    const a = action.data;
+    if (a.action === 'extend') {
+      const after = await extendSubscription(u, a.days, a.plan, adminEmail, pay.data);
+      const taka = pay.data.amount ? ` · ৳${pay.data.amount}${pay.data.method ? ` (${pay.data.method})` : ''}` : '';
+      await deps.telegram.notify(`✅ সাবস্ক্রিপশন: ${u.accountId} → ${after.toISOString().slice(0, 10)} পর্যন্ত${taka}`, await deps.chatIds());
+      return res.json({ user: row((await User.findById(u._id)) as UserDoc) });
+    }
     let after: Date;
     let plan = u.subscription.plan;
     let status: 'trial' | 'active' | 'expired' = 'active';
-    const a = action.data;
-    if (a.action === 'extend') {
-      // add on top of the remaining time, so nobody loses paid days
-      const base = Math.max(Date.now(), before.getTime());
-      after = new Date(base + a.days * DAY);
-      plan = a.plan;
-    } else if (a.action === 'set_date') {
+    if (a.action === 'set_date') {
       after = new Date(a.expiresAt);
       after.setHours(23, 59, 59, 999);
       plan = a.plan;
@@ -135,25 +155,7 @@ export function registerAdminRoutes(
     }
 
     await User.updateOne({ _id: u._id }, { $set: { 'subscription.expiresAt': after, 'subscription.status': status, 'subscription.plan': plan } });
-    const adminEmail = (req as unknown as { user: UserDoc }).user.email;
-    await SubscriptionLog.create({
-      userId: u._id,
-      accountId: u.accountId,
-      action: a.action,
-      plan,
-      days: a.action === 'extend' ? a.days : 0,
-      before,
-      after,
-      ...pay.data,
-      by: adminEmail,
-    });
-    if (a.action !== 'expire') {
-      const taka = pay.data.amount ? ` · ৳${pay.data.amount}${pay.data.method ? ` (${pay.data.method})` : ''}` : '';
-      await deps.telegram.notify(
-        `✅ সাবস্ক্রিপশন: ${u.accountId} → ${after.toISOString().slice(0, 10)} পর্যন্ত${taka}`,
-        await deps.chatIds(),
-      );
-    }
+    await SubscriptionLog.create({ userId: u._id, accountId: u.accountId, action: a.action, plan, days: 0, before, after, ...pay.data, by: adminEmail });
     const updated = (await User.findById(u._id)) as UserDoc;
     res.json({ user: row(updated) });
   });
