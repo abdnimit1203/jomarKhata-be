@@ -37,7 +37,14 @@ const userSchema = new Schema(
   { timestamps: true },
 );
 
-export type UserDoc = InferSchemaType<typeof userSchema> & { _id: mongoose.Types.ObjectId };
+export type UserDoc = InferSchemaType<typeof userSchema> & { _id: mongoose.Types.ObjectId; createdAt: Date };
+
+/** A referral code can be added once, within this many days of opening the account. */
+export const REFERRAL_CLAIM_DAYS = 7;
+
+export function canAddReferral(u: UserDoc): boolean {
+  return !u.referredBy && Date.now() - new Date(u.createdAt).getTime() < REFERRAL_CLAIM_DAYS * 86_400_000;
+}
 export const User = mongoose.models.User ?? mongoose.model('User', userSchema);
 
 /** What the app receives (no internal fields). */
@@ -57,5 +64,7 @@ export function publicUser(u: UserDoc, stats: { referredUsers: number }) {
       freeDaysEarned: 0,
     },
     subscription: { status: u.subscription.status, plan: u.subscription.plan, expiresAt: u.subscription.expiresAt },
+    /** true = no referrer yet and still inside the one-time window (the app may offer "কোড দিন"). */
+    canAddReferral: canAddReferral(u),
   };
 }

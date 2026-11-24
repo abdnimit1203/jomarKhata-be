@@ -7,6 +7,7 @@
  *   GET  /config                public values the app caches (WhatsApp, trial days, referral rate …)
  *   POST /auth/session          after Firebase sign-in: create the account on first login, return it
  *   GET  /me                    the signed-in user's account
+ *   POST /me/referral           add a referral code ONCE (no referrer yet, within 7 days of sign-up)
  *   GET  /subscription          { status, expiresAt, serverTime }
  *   GET  /admin/me              super admin only (the /admin panel checks this)
  *   GET  /admin/settings        super admin: changeable values
@@ -21,7 +22,7 @@ import { list, type Config } from './config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
 import type { Telegram } from './lib/telegram.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
-import { publicUser, User, type UserDoc } from './models/User.js';
+import { canAddReferral, publicUser, User, type UserDoc } from './models/User.js';
 
 /** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
 export interface VerifiedToken {
@@ -173,6 +174,24 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
 
   app.get('/me', requireToken, requireUser, async (req: AuthedRequest, res) => {
     res.json({ user: publicUser(req.user!, { referredUsers: await referredCount(req.user!) }), serverTime: new Date().toISOString() });
+  });
+
+  /** One-time: link a referrer after sign-up (e.g. someone who signed in with Google and skipped it). */
+  app.post('/me/referral', requireToken, requireUser, async (req: AuthedRequest, res) => {
+    const user = req.user!;
+    if (user.referredBy) return res.status(409).json({ error: 'already_set', message: 'রেফারেল কোড আগেই যোগ করা হয়েছে।' });
+    if (!canAddReferral(user)) return res.status(410).json({ error: 'too_late', message: 'রেফারেল কোড শুধু অ্যাকাউন্ট খোলার প্রথম ৭ দিনে দেওয়া যায়।' });
+    const code = normalizeReferralCode((req.body as { referralCode?: unknown } | undefined)?.referralCode);
+    if (!code) return res.status(400).json({ error: 'invalid_code', message: 'রেফারেল কোডটি ঠিক নেই।' });
+    const ref = (await User.findOne({ referralCode: code })) as UserDoc | null;
+    if (!ref) return res.status(404).json({ error: 'unknown_code', message: 'এই রেফারেল কোড পাওয়া যায়নি।' });
+    if (String(ref._id) === String(user._id)) return res.status(400).json({ error: 'own_code', message: 'নিজের কোড দেওয়া যাবে না।' });
+    // set once, atomically (a second request can't overwrite it)
+    const updated = (await User.findOneAndUpdate({ _id: user._id, referredBy: null }, { $set: { referredBy: ref._id } }, { new: true })) as UserDoc | null;
+    if (!updated) return res.status(409).json({ error: 'already_set', message: 'রেফারেল কোড আগেই যোগ করা হয়েছে।' });
+    const s = await settings();
+    await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})`, s.telegramChatIds);
+    res.json({ user: publicUser(updated, { referredUsers: await referredCount(updated) }), serverTime: new Date().toISOString() });
   });
 
   app.get('/subscription', requireToken, requireUser, (req: AuthedRequest, res) => {

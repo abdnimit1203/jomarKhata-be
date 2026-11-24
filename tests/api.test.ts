@@ -144,3 +144,27 @@ describe('settings (changeable from the dashboard, not env)', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe('one-time referral after sign-up (e.g. Google users)', () => {
+  it('adds once, rejects own code / unknown / second time; canAddReferral flips to false', async () => {
+    const a = await login('ra|ref@example.com');
+    const b = await login('rb|new@example.com'); // signed up without a code
+    expect(b.body.user.canAddReferral).toBe(true);
+    const auth = { authorization: 'Bearer rb|new@example.com' };
+    expect((await request(app).post('/me/referral').set(auth).send({ referralCode: b.body.user.referralCode })).body.error).toBe('own_code');
+    expect((await request(app).post('/me/referral').set(auth).send({ referralCode: 'JKZZZZZZ' })).status).toBe(404);
+    const ok = await request(app).post('/me/referral').set(auth).send({ referralCode: a.body.user.referralCode });
+    expect(ok.status).toBe(200);
+    expect(ok.body.user.canAddReferral).toBe(false);
+    expect((await request(app).post('/me/referral').set(auth).send({ referralCode: a.body.user.referralCode })).status).toBe(409);
+    const me = await request(app).get('/me').set('authorization', 'Bearer ra|ref@example.com');
+    expect(me.body.user.referralStats.referredUsers).toBe(1);
+  });
+
+  it('closed after 7 days', async () => {
+    await login('old|old@example.com');
+    await User.collection.updateOne({ firebaseUid: 'old' }, { $set: { createdAt: new Date(Date.now() - 8 * 86_400_000) } });
+    const r = await request(app).post('/me/referral').set('authorization', 'Bearer old|old@example.com').send({ referralCode: 'JKABCDEF' });
+    expect(r.status).toBe(410);
+  });
+});
