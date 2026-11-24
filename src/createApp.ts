@@ -15,8 +15,9 @@
  */
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import rateLimit from 'express-rate-limit';
-import helmet from 'helmet';
+// named import: works in both ESM and Vercel's CommonJS build (the default import did not)
+import { rateLimit } from 'express-rate-limit';
+import { securityHeaders } from './lib/securityHeaders.js';
 import { z } from 'zod';
 import { adminUrl, list, type Config } from './config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
@@ -78,7 +79,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  app.use(helmet());
+  app.use(securityHeaders);
   app.use(cors({ origin: list(config.CORS_ORIGINS), credentials: false }));
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));

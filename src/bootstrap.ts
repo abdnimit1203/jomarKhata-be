@@ -5,7 +5,7 @@
  */
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import dns from 'node:dns';
+import * as dns from 'node:dns';
 import mongoose from 'mongoose';
 import { createApp } from './createApp.js';
 import { loadConfig } from './config.js';
