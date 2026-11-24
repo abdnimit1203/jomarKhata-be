@@ -17,7 +17,7 @@ npm test                # API tests (in-memory MongoDB, fake tokens; no internet
 ## Production
 
 **Free start: Vercel** (a separate Vercel project for this repo)
-- `api/index.ts` is a serverless function and `vercel.json` sends every path to it, so there's no sleeping server.
+- `vercel.json` runs `npm run build` (src → dist) and `api/index.js` (plain JS) serves every path from `dist/`, so Vercel never compiles TypeScript itself and there is no sleeping server.
 - Steps:
   1. Vercel → Add New → Project → import this repo (no build settings needed).
   2. Add every variable from `.env` in Settings → Environment Variables.
