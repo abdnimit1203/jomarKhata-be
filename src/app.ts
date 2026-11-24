@@ -23,6 +23,7 @@ import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.
 import type { Telegram } from './lib/telegram.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
 import { canAddReferral, publicUser, User, type UserDoc } from './models/User.js';
+import { registerAdminRoutes, subscriptionStatus } from './routes/admin.js';
 
 /** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
 export interface VerifiedToken {
@@ -196,8 +197,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
 
   app.get('/subscription', requireToken, requireUser, (req: AuthedRequest, res) => {
     const s = req.user!.subscription;
-    const expired = s.expiresAt.getTime() < Date.now();
-    res.json({ status: expired ? 'expired' : s.status, expiresAt: s.expiresAt.toISOString(), serverTime: new Date().toISOString() });
+    res.json({ status: subscriptionStatus(req.user!), expiresAt: s.expiresAt.toISOString(), serverTime: new Date().toISOString() });
   });
 
   app.get('/admin/me', requireToken, requireUser, requireSuperAdmin, (req: AuthedRequest, res) => {
@@ -219,6 +219,11 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     };
     await Settings.updateOne({ _id: 'global' }, { $set: { ...next, updatedBy: req.user!.email } }, { upsert: true });
     res.json({ settings: next });
+  });
+
+  registerAdminRoutes(app, [requireToken, requireUser, requireSuperAdmin] as never, {
+    telegram,
+    chatIds: async () => (await settings()).telegramChatIds,
   });
 
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));

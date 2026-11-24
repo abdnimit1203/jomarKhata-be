@@ -63,7 +63,11 @@ export function publicUser(u: UserDoc, stats: { referredUsers: number }) {
       commissionEarned: 0, // filled by the commission ledger once payments exist
       freeDaysEarned: 0,
     },
-    subscription: { status: u.subscription.status, plan: u.subscription.plan, expiresAt: u.subscription.expiresAt },
+    subscription: {
+      status: u.subscription.expiresAt.getTime() < Date.now() ? 'expired' : u.subscription.status,
+      plan: u.subscription.plan,
+      expiresAt: u.subscription.expiresAt,
+    },
     /** true = no referrer yet and still inside the one-time window (the app may offer "কোড দিন"). */
     canAddReferral: canAddReferral(u),
   };

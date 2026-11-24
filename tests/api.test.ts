@@ -168,3 +168,50 @@ describe('one-time referral after sign-up (e.g. Google users)', () => {
     expect(r.status).toBe(410);
   });
 });
+
+describe('admin: users & subscriptions', () => {
+  const admin = { authorization: 'Bearer own|owner@example.com' };
+  beforeEach(async () => {
+    await mongoose.connection.collection('subscriptionlogs').deleteMany({});
+  });
+
+  it('only the super admin; stats and search', async () => {
+    await login('own|owner@example.com');
+    const u = await login('s1|shop1@example.com');
+    expect((await request(app).get('/admin/stats').set('authorization', 'Bearer s1|shop1@example.com')).status).toBe(403);
+    const stats = await request(app).get('/admin/stats').set(admin);
+    expect(stats.body).toMatchObject({ total: 2, trial: 2, paid: 0, expired: 0 });
+    const found = await request(app).get('/admin/users').query({ q: u.body.user.accountId }).set(admin);
+    expect(found.body.users).toHaveLength(1);
+    expect(found.body.users[0].subscription.daysLeft).toBeGreaterThan(0);
+  });
+
+  it('extend adds on top of the remaining time, is logged, and the user sees it', async () => {
+    await login('own|owner@example.com');
+    const u = await login('s2|shop2@example.com');
+    const id = u.body.user.accountId;
+    const before = Date.parse(u.body.user.subscription.expiresAt);
+    const r = await request(app)
+      .post(`/admin/users/${id}/subscription`)
+      .set(admin)
+      .send({ action: 'extend', days: 180, plan: '6m', amount: 999, method: 'bkash', trxId: 'ABC123' });
+    expect(r.status).toBe(200);
+    expect(Math.round((Date.parse(r.body.user.subscription.expiresAt) - before) / 86_400_000)).toBe(180); // trial days kept
+    expect(r.body.user.subscription.status).toBe('active');
+    const detail = await request(app).get(`/admin/users/${id}`).set(admin);
+    expect(detail.body.history[0]).toMatchObject({ action: 'extend', days: 180, amount: 999, trxId: 'ABC123', by: 'owner@example.com' });
+    const sub = await request(app).get('/subscription').set('authorization', 'Bearer s2|shop2@example.com');
+    expect(sub.body.status).toBe('active');
+  });
+
+  it('expire now → user sees expired; block/unblock; super admin cannot be blocked', async () => {
+    const own = await login('own|owner@example.com');
+    const u = await login('s3|shop3@example.com');
+    const id = u.body.user.accountId;
+    await request(app).post(`/admin/users/${id}/subscription`).set(admin).send({ action: 'expire' });
+    const sub = await request(app).get('/subscription').set('authorization', 'Bearer s3|shop3@example.com');
+    expect(sub.body.status).toBe('expired');
+    expect((await request(app).post(`/admin/users/${id}/status`).set(admin).send({ status: 'blocked' })).body.user.status).toBe('blocked');
+    expect((await request(app).post(`/admin/users/${own.body.user.accountId}/status`).set(admin).send({ status: 'blocked' })).status).toBe(400);
+  });
+});
