@@ -181,6 +181,9 @@ describe('admin: users & subscriptions', () => {
     expect((await request(app).get('/admin/stats').set('authorization', 'Bearer s1|shop1@example.com')).status).toBe(403);
     const stats = await request(app).get('/admin/stats').set(admin);
     expect(stats.body).toMatchObject({ total: 2, trial: 2, paid: 0, expired: 0 });
+    expect(stats.body.signupsByDay).toHaveLength(30);
+    expect(stats.body.signupsByDay.at(-1).users).toBe(2);
+    expect(stats.body.revenueByMonth).toHaveLength(6);
     const found = await request(app).get('/admin/users').query({ q: u.body.user.accountId }).set(admin);
     expect(found.body.users).toHaveLength(1);
     expect(found.body.users[0].subscription.daysLeft).toBeGreaterThan(0);

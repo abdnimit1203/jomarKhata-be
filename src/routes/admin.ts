@@ -86,7 +86,39 @@ export function registerAdminRoutes(
       User.countDocuments({ status: 'blocked' }),
       User.find({ 'subscription.expiresAt': { $gte: now, $lte: soon } }).sort({ 'subscription.expiresAt': 1 }).limit(50),
     ]);
-    res.json({ total, trial, paid, expired, blocked, endingSoon: (endingSoon as UserDoc[]).map(row) });
+    // charts: new users per day (30 days) and money per month (6 months, from the subscription log,
+    // so approved requests AND manual extensions with an amount both count)
+    const since30 = new Date(Date.now() - 29 * DAY);
+    since30.setHours(0, 0, 0, 0);
+    const since6m = new Date();
+    since6m.setMonth(since6m.getMonth() - 5, 1);
+    since6m.setHours(0, 0, 0, 0);
+    const tz = 'Asia/Dhaka';
+    const [signups, revenue] = await Promise.all([
+      User.aggregate([
+        { $match: { createdAt: { $gte: since30 } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } }, n: { $sum: 1 } } },
+      ]),
+      SubscriptionLog.aggregate([
+        { $match: { createdAt: { $gte: since6m }, amount: { $gt: 0 } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt', timezone: tz } }, taka: { $sum: '$amount' }, n: { $sum: 1 } } },
+      ]),
+    ]);
+    const dayKey = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d); // yyyy-mm-dd
+    const byDay = new Map(signups.map((x: { _id: string; n: number }) => [x._id, x.n]));
+    const signupsByDay = Array.from({ length: 30 }, (_, i) => {
+      const k = dayKey(new Date(since30.getTime() + i * DAY));
+      return { day: k, users: byDay.get(k) ?? 0 };
+    });
+    const byMonth = new Map(revenue.map((x: { _id: string; taka: number; n: number }) => [x._id, x]));
+    const revenueByMonth = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(since6m);
+      d.setMonth(since6m.getMonth() + i);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const m = byMonth.get(k) as { taka: number; n: number } | undefined;
+      return { month: k, taka: m?.taka ?? 0, orders: m?.n ?? 0 };
+    });
+    res.json({ total, trial, paid, expired, blocked, endingSoon: (endingSoon as UserDoc[]).map(row), signupsByDay, revenueByMonth });
   });
 
   app.get('/admin/users', ...guard, async (req, res) => {
