@@ -73,7 +73,7 @@ const paymentInput = z.object({
 export function registerAdminRoutes(
   app: Express,
   guard: RequestHandler[],
-  deps: { telegram: Telegram; chatIds: () => Promise<string[]> },
+  deps: { telegram: Telegram; chatIds: () => Promise<string[]>; adminUrl: string },
 ) {
   app.get('/admin/stats', ...guard, async (_req, res) => {
     const now = new Date();
@@ -171,7 +171,8 @@ export function registerAdminRoutes(
     if (a.action === 'extend') {
       const after = await extendSubscription(u, a.days, a.plan, adminEmail, pay.data);
       const taka = pay.data.amount ? ` · ৳${pay.data.amount}${pay.data.method ? ` (${pay.data.method})` : ''}` : '';
-      await deps.telegram.notify(`✅ সাবস্ক্রিপশন: ${u.accountId} → ${after.toISOString().slice(0, 10)} পর্যন্ত${taka}`, await deps.chatIds());
+      const link = deps.adminUrl ? `\n${deps.adminUrl}/users/${u.accountId}` : '';
+      await deps.telegram.notify(`✅ সাবস্ক্রিপশন: ${u.accountId} → ${after.toISOString().slice(0, 10)} পর্যন্ত${taka}${link}`, await deps.chatIds());
       return res.json({ user: row((await User.findById(u._id)) as UserDoc) });
     }
     let after: Date;

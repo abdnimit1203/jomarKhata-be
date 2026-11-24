@@ -196,7 +196,8 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     const updated = (await User.findOneAndUpdate({ _id: user._id, referredBy: null }, { $set: { referredBy: ref._id } }, { new: true })) as UserDoc | null;
     if (!updated) return res.status(409).json({ error: 'already_set', message: 'রেফারেল কোড আগেই যোগ করা হয়েছে।' });
     const s = await settings();
-    await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})`, s.telegramChatIds);
+    const link = config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${updated.accountId}` : '';
+    await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})${link}`, s.telegramChatIds);
     res.json({ user: publicUser(updated, { referredUsers: await referredCount(updated) }), serverTime: new Date().toISOString() });
   });
 
@@ -235,6 +236,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   registerAdminRoutes(app, [requireToken, requireUser, requireSuperAdmin] as never, {
     telegram,
     chatIds: async () => (await settings()).telegramChatIds,
+    adminUrl: config.ADMIN_URL,
   });
 
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));

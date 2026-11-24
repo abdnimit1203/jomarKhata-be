@@ -63,7 +63,8 @@ export function registerPaymentRoutes(
         days: plan.days,
         amount: plan.price,
       });
-      const link = deps.adminUrl ? `\n${deps.adminUrl}/payments` : '';
+      // one tap → the request list filtered to this TrxID (approve right there)
+      const link = deps.adminUrl ? `\n${deps.adminUrl}/payments?q=${encodeURIComponent(doc.trxId)}` : '';
       await deps.telegram.notify(
         `💰 নতুন পেমেন্ট রিকোয়েস্ট: ${plan.label} · ৳${plan.price} · ${METHOD_BN[parsed.data.method]}\nTrxID: ${doc.trxId}\n${user.accountId} · ${user.email}${link}`,
         s.telegramChatIds,
