@@ -47,6 +47,7 @@ beforeEach(async () => {
 describe('ids', () => {
   it('account ID and referral code formats; referral normalisation', () => {
     expect(newAccountId()).toMatch(/^JK-\d{4}-\d{4}$/);
+    for (let i = 0; i < 2000; i++) expect(newAccountId().startsWith('JK-0')).toBe(false); // JK-0000-… is reserved for staff
     expect(newReferralCode()).toMatch(/^JK[A-HJ-NP-Z2-9]{6}$/);
     expect(normalizeReferralCode(' jk7q-4m2x ')).toBe('JK7Q4M2X');
     expect(normalizeReferralCode('x!')).toBeNull();
