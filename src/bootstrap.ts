@@ -7,12 +7,31 @@
  */
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import dns from 'node:dns';
 import mongoose from 'mongoose';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { makeTelegram } from './lib/telegram.js';
 
 let ready: Promise<ReturnType<typeof createApp>> | null = null;
+
+/**
+ * `mongodb+srv://` needs a DNS SRV lookup. Some ISPs' DNS refuse it (seen in Bangladesh:
+ * "querySrv ECONNREFUSED"). In that case retry once through public DNS (Cloudflare, Google).
+ */
+async function connectDb(uri: string) {
+  const opts = { serverSelectionTimeoutMS: 10_000, maxPoolSize: 5 };
+  try {
+    await mongoose.connect(uri, opts);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/querySrv|ENOTFOUND|ECONNREFUSED/.test(msg) || !uri.startsWith('mongodb+srv://')) throw err;
+    console.warn('[db] SRV lookup failed with the system DNS; retrying through public DNS');
+    dns.setServers(['1.1.1.1', '8.8.8.8']);
+    await mongoose.connect(uri, opts);
+  }
+  console.log('[db] connected');
+}
 
 async function init() {
   const config = loadConfig();
@@ -25,10 +44,7 @@ async function init() {
       }),
     });
   }
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connect(config.MONGODB_URI, { serverSelectionTimeoutMS: 10_000, maxPoolSize: 5 });
-    console.log('[db] connected');
-  }
+  if (mongoose.connection.readyState !== 1) await connectDb(config.MONGODB_URI);
   const auth = getAuth();
   return createApp({
     config,
