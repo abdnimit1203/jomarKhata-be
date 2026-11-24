@@ -12,6 +12,7 @@
 import type { Express, RequestHandler } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
+import { searchRegex } from '../lib/search.js';
 import type { Telegram } from '../lib/telegram.js';
 import { PaymentRequest } from '../models/PaymentRequest.js';
 import type { SettingsValue } from '../models/Settings.js';
@@ -20,7 +21,6 @@ import { extendSubscription } from './admin.js';
 
 const PAGE = 30;
 const METHOD_BN: Record<string, string> = { bkash: 'বিকাশ', nagad: 'নগদ', bank: 'ব্যাংক' };
-const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const requestInput = z.object({
   plan: z.string().trim().min(1).max(20),
@@ -90,7 +90,7 @@ export function registerPaymentRoutes(
     const where: Record<string, unknown> = {};
     if (status !== 'all') where.status = status;
     if (q) {
-      const rx = new RegExp(escapeRegex(q), 'i');
+      const rx = searchRegex(q); // English or Bangla digits both match
       where.$or = [{ accountId: rx }, { email: rx }, { trxId: rx }, { shopName: rx }, { payerNumber: rx }];
     }
     const [total, list, pending] = await Promise.all([

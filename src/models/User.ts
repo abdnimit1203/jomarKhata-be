@@ -22,6 +22,9 @@ const userSchema = new Schema(
     displayName: { type: String, default: '' },
     phone: { type: String, default: '' },
     shopName: { type: String, default: '' },
+    ownerName: { type: String, default: '' },
+    /** How they sign in: 'google.com' or 'password' (from the Firebase token). */
+    signInProvider: { type: String, default: '' },
     role: { type: String, enum: ['user', 'super_admin'], default: 'user' },
     status: { type: String, enum: ['active', 'blocked'], default: 'active' },
 

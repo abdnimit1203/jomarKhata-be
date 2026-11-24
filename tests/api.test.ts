@@ -15,8 +15,8 @@ let mongo: MongoMemoryServer;
 const sent: string[] = [];
 const verifyToken: VerifyToken = async (t) => {
   if (t === 'bad') throw new Error('invalid');
-  const [uid, email] = t.split('|');
-  return { uid, email: email || undefined, email_verified: true };
+  const [uid, email, provider] = t.split('|');
+  return { uid, email: email || undefined, email_verified: true, firebase: { sign_in_provider: provider || 'password' } };
 };
 const config = loadConfig({
   MONGODB_URI: 'unused',
@@ -261,5 +261,25 @@ describe('payments: request → approve / reject', () => {
     expect(rej.body.request.status).toBe('rejected');
     const mine = await request(app).get('/me/payments').set(auth);
     expect(mine.body.requests[0]).toMatchObject({ status: 'rejected', reason: 'TrxID মেলেনি' });
+  });
+});
+
+
+describe('admin search & user extras', () => {
+  const admin = { authorization: 'Bearer own|owner@example.com' };
+  it('shop identity from the app; Bangla/English digits both match; login method; promoter toggle', async () => {
+    await login('own|owner@example.com');
+    await login('g1|g1@example.com|google.com');
+    const auth = { authorization: 'Bearer g1|g1@example.com|google.com' };
+    expect((await request(app).put('/me/profile').set(auth).send({ shopName: 'মায়ের দোয়া স্টোর', ownerName: 'রহিম', phone: '০১৭১২৩৪৫৬৭৮' })).status).toBe(200);
+    for (const q of ['01712', '০১৭১২', 'মায়ের দোয়া', 'রহিম']) {
+      const r = await request(app).get('/admin/users').query({ q }).set(admin);
+      expect(r.body.users.map((u: { email: string }) => u.email), q).toEqual(['g1@example.com']);
+    }
+    const id = (await request(app).get('/admin/users').query({ q: 'g1@' }).set(admin)).body.users[0];
+    expect(id.signInProvider).toBe('google.com');
+    expect(id.ownerName).toBe('রহিম');
+    const p = await request(app).post(`/admin/users/${id.accountId}/referrer-type`).set(admin).send({ referrerType: 'promoter' });
+    expect(p.body.user.referrerType).toBe('promoter');
   });
 });

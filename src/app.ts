@@ -33,6 +33,8 @@ export interface VerifiedToken {
   email_verified?: boolean;
   name?: string;
   phone_number?: string;
+  /** Firebase: how this token was obtained ('google.com', 'password', …). */
+  firebase?: { sign_in_provider?: string };
 }
 export type VerifyToken = (idToken: string) => Promise<VerifiedToken>;
 
@@ -153,6 +155,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
           email,
           emailVerified: Boolean(t.email_verified),
           displayName: t.name ?? '',
+          signInProvider: t.firebase?.sign_in_provider ?? '',
           phone: t.phone_number ?? '',
           role: superAdmins.has(email) ? 'super_admin' : 'user',
           referredBy,
@@ -165,6 +168,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     } else {
       if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে।' });
       user.lastSeenAt = new Date();
+      if (t.firebase?.sign_in_provider) user.signInProvider = t.firebase.sign_in_provider;
       if (t.email_verified) user.emailVerified = true;
       if (superAdmins.has(user.email) && user.role !== 'super_admin') user.role = 'super_admin';
       await (user as unknown as { save(): Promise<unknown> }).save();
@@ -199,6 +203,17 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     const link = config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${updated.accountId}` : '';
     await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})${link}`, s.telegramChatIds);
     res.json({ user: publicUser(updated, { referredUsers: await referredCount(updated) }), serverTime: new Date().toISOString() });
+  });
+
+  /** The shop's identity (name, owner, phone) from the app, so the admin can find the shop. */
+  app.put('/me/profile', requireToken, requireUser, async (req: AuthedRequest, res) => {
+    const parsed = z
+      .object({ shopName: z.string().trim().max(80), ownerName: z.string().trim().max(80), phone: z.string().trim().max(20) })
+      .partial()
+      .safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'invalid' });
+    await User.updateOne({ _id: req.user!._id }, { $set: parsed.data });
+    res.json({ ok: true });
   });
 
   app.get('/subscription', requireToken, requireUser, (req: AuthedRequest, res) => {

@@ -8,6 +8,7 @@
  */
 import type { Express, RequestHandler } from 'express';
 import { z } from 'zod';
+import { searchRegex } from '../lib/search.js';
 import type { Telegram } from '../lib/telegram.js';
 import { SubscriptionLog } from '../models/SubscriptionLog.js';
 import { User, type UserDoc } from '../models/User.js';
@@ -15,7 +16,6 @@ import { User, type UserDoc } from '../models/User.js';
 const DAY = 86_400_000;
 const PAGE = 30;
 
-const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Effective status right now (an expired date wins over the stored status). */
 export function subscriptionStatus(u: { subscription: { status: string; expiresAt: Date } }): 'trial' | 'active' | 'expired' {
@@ -29,6 +29,8 @@ function row(u: UserDoc) {
     email: u.email,
     phone: u.phone,
     shopName: u.shopName,
+    ownerName: (u as unknown as { ownerName?: string }).ownerName ?? '',
+    signInProvider: (u as unknown as { signInProvider?: string }).signInProvider ?? '',
     displayName: u.displayName,
     role: u.role,
     status: u.status,
@@ -128,8 +130,8 @@ export function registerAdminRoutes(
     const now = new Date();
     const where: Record<string, unknown> = {};
     if (q) {
-      const rx = new RegExp(escapeRegex(q), 'i');
-      where.$or = [{ accountId: rx }, { email: rx }, { phone: rx }, { shopName: rx }, { displayName: rx }, { referralCode: rx }];
+      const rx = searchRegex(q); // English or Bangla digits both match
+      where.$or = [{ accountId: rx }, { email: rx }, { phone: rx }, { shopName: rx }, { ownerName: rx }, { displayName: rx }, { referralCode: rx }];
     }
     if (filter === 'trial') Object.assign(where, { 'subscription.status': 'trial', 'subscription.expiresAt': { $gte: now } });
     if (filter === 'paid') Object.assign(where, { 'subscription.status': 'active', 'subscription.expiresAt': { $gte: now } });
@@ -191,6 +193,15 @@ export function registerAdminRoutes(
     await SubscriptionLog.create({ userId: u._id, accountId: u.accountId, action: a.action, plan, days: 0, before, after, ...pay.data, by: adminEmail });
     const updated = (await User.findById(u._id)) as UserDoc;
     res.json({ user: row(updated) });
+  });
+
+  /** Referral role: promoter (cash commission) or regular (free months). */
+  app.post('/admin/users/:accountId/referrer-type', ...guard, async (req, res) => {
+    const parsed = z.object({ referrerType: z.enum(['regular', 'promoter']) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'invalid' });
+    const u = (await User.findOneAndUpdate({ accountId: req.params.accountId }, { $set: { referrerType: parsed.data.referrerType } }, { new: true })) as UserDoc | null;
+    if (!u) return res.status(404).json({ error: 'not_found' });
+    res.json({ user: row(u) });
   });
 
   app.post('/admin/users/:accountId/status', ...guard, async (req, res) => {
