@@ -1,0 +1,176 @@
+/**
+ * Express app. Dependencies (token verifier, Telegram) are passed in so tests can run without
+ * Firebase or the network.
+ *
+ * Routes (contract: jomarKhata-fe/docs/BACKEND_CONTRACT.md):
+ *   GET  /health
+ *   GET  /config                public settings the app caches (trial days, referral rate …)
+ *   POST /auth/session          after Firebase sign-in: create the account on first login, return it
+ *   GET  /me                    the signed-in user's account
+ *   GET  /subscription          { status, expiresAt, serverTime }
+ *   GET  /admin/me              super admin only (the /admin panel checks this)
+ */
+import cors from 'cors';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
+import { list, type Config } from './config.js';
+import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
+import type { Telegram } from './lib/telegram.js';
+import { publicUser, User, type UserDoc } from './models/User.js';
+
+/** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
+export interface VerifiedToken {
+  uid: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  phone_number?: string;
+}
+export type VerifyToken = (idToken: string) => Promise<VerifiedToken>;
+
+interface Deps {
+  config: Config;
+  verifyToken: VerifyToken;
+  telegram: Telegram;
+}
+
+type AuthedRequest = Request & { token?: VerifiedToken; user?: UserDoc };
+
+const REFERRAL_RATE = 0.2; // default; becomes a super-admin setting (contract §9.1)
+
+/** Retry an insert when a random unique value collides (MongoDB duplicate key 11000). */
+async function withUniqueRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const dup = (err as { code?: number }).code === 11000;
+      const onUid = JSON.stringify((err as { keyPattern?: unknown }).keyPattern ?? {}).includes('firebaseUid');
+      if (!dup || onUid || i >= tries - 1) throw err;
+    }
+  }
+}
+
+export function createApp({ config, verifyToken, telegram }: Deps) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  app.use(helmet());
+  app.use(cors({ origin: list(config.CORS_ORIGINS), credentials: false }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
+
+  const superAdmins = new Set(list(config.SUPER_ADMIN_EMAILS).map((e) => e.toLowerCase()));
+
+  /** Verifies "Authorization: Bearer <Firebase ID token>". */
+  const requireToken = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const header = req.get('authorization') ?? '';
+    const idToken = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!idToken) return res.status(401).json({ error: 'unauthenticated', message: 'লগইন করুন।' });
+    try {
+      req.token = await verifyToken(idToken);
+      next();
+    } catch {
+      res.status(401).json({ error: 'invalid_token', message: 'লগইনের মেয়াদ শেষ। আবার লগইন করুন।' });
+    }
+  };
+
+  /** Token + an existing, non-blocked account. */
+  const requireUser = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const user = (await User.findOne({ firebaseUid: req.token!.uid })) as UserDoc | null;
+    if (!user) return res.status(404).json({ error: 'no_account', message: 'অ্যাকাউন্ট পাওয়া যায়নি। আবার লগইন করুন।' });
+    if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে। সাহায্যের জন্য যোগাযোগ করুন।' });
+    req.user = user;
+    next();
+  };
+
+  const referredCount = (u: UserDoc) => User.countDocuments({ referredBy: u._id });
+
+  app.get('/health', (_req, res) => {
+    res.json({ ok: true, serverTime: new Date().toISOString() });
+  });
+
+  app.get('/config', (_req, res) => {
+    res.set('cache-control', 'public, max-age=300');
+    res.json({ trialDays: config.TRIAL_DAYS, referral: { rate: REFERRAL_RATE } });
+  });
+
+  app.post('/auth/session', requireToken, async (req: AuthedRequest, res) => {
+    const t = req.token!;
+    let user = (await User.findOne({ firebaseUid: t.uid })) as UserDoc | null;
+    let created = false;
+    let referralAccepted: boolean | null = null;
+
+    if (!user) {
+      // Accounts are email-based (owner rule): no email → no account.
+      if (!t.email) return res.status(400).json({ error: 'email_required', message: 'অ্যাকাউন্ট খুলতে ইমেইল লাগবে।' });
+
+      let referredBy = null;
+      const code = normalizeReferralCode((req.body as { referralCode?: unknown } | undefined)?.referralCode);
+      if (code) {
+        const ref = (await User.findOne({ referralCode: code })) as UserDoc | null;
+        referralAccepted = Boolean(ref && ref.email !== t.email.toLowerCase());
+        if (referralAccepted) referredBy = ref!._id;
+      }
+
+      const email = t.email.toLowerCase();
+      const now = Date.now();
+      user = (await withUniqueRetry(() =>
+        User.create({
+          firebaseUid: t.uid,
+          accountId: newAccountId(),
+          referralCode: newReferralCode(),
+          email,
+          emailVerified: Boolean(t.email_verified),
+          displayName: t.name ?? '',
+          phone: t.phone_number ?? '',
+          role: superAdmins.has(email) ? 'super_admin' : 'user',
+          referredBy,
+          subscription: { status: 'trial', plan: 'trial', expiresAt: new Date(now + config.TRIAL_DAYS * 86_400_000) },
+        }),
+      )) as unknown as UserDoc;
+      created = true;
+      telegram.notify(
+        `🆕 নতুন অ্যাকাউন্ট: ${user.accountId}\n${email}${referredBy ? `\nরেফারেল: ${code}` : ''}` +
+          (config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${user.accountId}` : ''),
+      );
+    } else {
+      if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে।' });
+      user.lastSeenAt = new Date();
+      if (t.email_verified) user.emailVerified = true;
+      if (superAdmins.has(user.email) && user.role !== 'super_admin') user.role = 'super_admin';
+      await (user as unknown as { save(): Promise<unknown> }).save();
+    }
+
+    res.status(created ? 201 : 200).json({
+      created,
+      referralAccepted,
+      user: publicUser(user, { referredUsers: await referredCount(user) }),
+      serverTime: new Date().toISOString(),
+    });
+  });
+
+  app.get('/me', requireToken, requireUser, async (req: AuthedRequest, res) => {
+    res.json({ user: publicUser(req.user!, { referredUsers: await referredCount(req.user!) }), serverTime: new Date().toISOString() });
+  });
+
+  app.get('/subscription', requireToken, requireUser, (req: AuthedRequest, res) => {
+    const s = req.user!.subscription;
+    const expired = s.expiresAt.getTime() < Date.now();
+    res.json({ status: expired ? 'expired' : s.status, expiresAt: s.expiresAt.toISOString(), serverTime: new Date().toISOString() });
+  });
+
+  app.get('/admin/me', requireToken, requireUser, (req: AuthedRequest, res) => {
+    if (req.user!.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
+    res.json({ role: 'super_admin', email: req.user!.email });
+  });
+
+  app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('[error]', err);
+    res.status(500).json({ error: 'server_error', message: 'সার্ভারে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।' });
+  });
+
+  return app;
+}

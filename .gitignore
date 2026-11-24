@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# Secrets: never commit (only .env.example is allowed)
+.env*
+!.env.example
+# AI tool files stay local
+AGENTS.md
+CLAUDE.md
+.claude/
