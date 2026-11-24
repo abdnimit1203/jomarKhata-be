@@ -38,6 +38,7 @@ as in `.env` in the host's settings. Add the production frontend URL to `CORS_OR
 | GET | `/me` | the signed-in account |
 | GET | `/subscription` | `{ status, expiresAt, serverTime }` |
 | GET | `/admin/me` | super admin only |
+| GET/PUT | `/admin/settings` | super admin: WhatsApp number, payment numbers, trial days, referral rate, Telegram chat IDs (no env change needed) |
 
 Security: helmet, CORS allow-list, rate limit (120/min/IP), 1 MB JSON limit, token revocation check,
 blocked accounts refused, no passwords stored, secrets only in `.env` (git-ignored).

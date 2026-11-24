@@ -1,0 +1,46 @@
+/**
+ * Everything the owner may change WITHOUT touching env or code (owner, 2026-11-24): one document,
+ * edited from the super-admin dashboard (PUT /admin/settings). Secrets (DB URI, Firebase keys,
+ * Telegram bot TOKEN) stay in .env; the Telegram chat IDs (who receives alerts) live here.
+ */
+import mongoose, { Schema } from 'mongoose';
+
+const settingsSchema = new Schema(
+  {
+    _id: { type: String, default: 'global' },
+    supportWhatsApp: { type: String, default: '' },
+    trialDays: { type: Number, default: 30, min: 0, max: 365 },
+    referralRate: { type: Number, default: 0.2, min: 0, max: 1 },
+    paymentNumbers: {
+      bkash: { type: String, default: '' },
+      nagad: { type: String, default: '' },
+      bank: { type: String, default: '' },
+    },
+    /** Who receives Telegram alerts (the bot token itself stays in .env). */
+    telegramChatIds: { type: [String], default: [] },
+    updatedBy: { type: String, default: '' },
+  },
+  { timestamps: true },
+);
+
+export const Settings = mongoose.models.Settings ?? mongoose.model('Settings', settingsSchema);
+
+export interface SettingsValue {
+  supportWhatsApp: string;
+  trialDays: number;
+  referralRate: number;
+  paymentNumbers: { bkash: string; nagad: string; bank: string };
+  telegramChatIds: string[];
+}
+
+/** Current settings; created with defaults on first use. `fallback` fills from env until edited. */
+export async function getSettings(fallback: Partial<SettingsValue> = {}): Promise<SettingsValue> {
+  const doc = (await Settings.findById('global').lean()) as Partial<SettingsValue> | null;
+  return {
+    supportWhatsApp: doc?.supportWhatsApp ?? fallback.supportWhatsApp ?? '',
+    trialDays: doc?.trialDays ?? fallback.trialDays ?? 30,
+    referralRate: doc?.referralRate ?? fallback.referralRate ?? 0.2,
+    paymentNumbers: { bkash: '', nagad: '', bank: '', ...(doc?.paymentNumbers ?? {}) },
+    telegramChatIds: doc?.telegramChatIds?.length ? doc.telegramChatIds : (fallback.telegramChatIds ?? []),
+  };
+}

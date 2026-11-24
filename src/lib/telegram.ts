@@ -1,17 +1,18 @@
 /**
  * Owner alerts on Telegram (new account, payment, request). Fire-and-forget: a Telegram problem
- * never blocks or fails the user's request. Off when TELEGRAM_BOT_TOKEN or chat ID is empty.
+ * never blocks or fails the user's request.
+ * - Bot TOKEN: .env (secret, set once).
+ * - Chat IDs (who receives): dashboard settings (`telegramChatIds`), passed in per message;
+ *   TELEGRAM_ADMIN_CHAT_ID in .env is only the fallback until set in the dashboard.
  */
-import { list, type Config } from '../config.js';
+import type { Config } from '../config.js';
 
-export function makeTelegram(config: Pick<Config, 'TELEGRAM_BOT_TOKEN' | 'TELEGRAM_ADMIN_CHAT_ID'>) {
-  const chats = list(config.TELEGRAM_ADMIN_CHAT_ID);
-  const enabled = Boolean(config.TELEGRAM_BOT_TOKEN && chats.length);
+export function makeTelegram(config: Pick<Config, 'TELEGRAM_BOT_TOKEN'>) {
   return {
-    enabled,
-    notify(text: string): void {
-      if (!enabled) return;
-      for (const chat_id of chats) {
+    enabled: Boolean(config.TELEGRAM_BOT_TOKEN),
+    notify(text: string, chatIds: string[]): void {
+      if (!config.TELEGRAM_BOT_TOKEN || chatIds.length === 0) return;
+      for (const chat_id of chatIds) {
         fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },

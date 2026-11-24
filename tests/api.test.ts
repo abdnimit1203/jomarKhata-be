@@ -25,8 +25,9 @@ const config = loadConfig({
   FIREBASE_PRIVATE_KEY: 'x',
   SUPER_ADMIN_EMAILS: 'owner@example.com',
   TRIAL_DAYS: '30',
+  TELEGRAM_ADMIN_CHAT_ID: '12345',
 } as NodeJS.ProcessEnv);
-const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: (t) => void sent.push(t) } });
+const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: (t: string) => void sent.push(t) } });
 const login = (token: string, body: object = {}) => request(app).post('/auth/session').set('authorization', `Bearer ${token}`).send(body);
 
 beforeAll(async () => {
@@ -105,5 +106,40 @@ describe('auth', () => {
     const r = await request(app).get('/subscription').set('authorization', 'Bearer u5|s@example.com');
     expect(r.body.status).toBe('trial');
     expect(typeof r.body.serverTime).toBe('string');
+  });
+});
+
+describe('settings (changeable from the dashboard, not env)', () => {
+  beforeEach(async () => {
+    await mongoose.connection.collection('settings').deleteMany({});
+  });
+
+  it('public /config has defaults; only the super admin can read/update settings', async () => {
+    const c = await request(app).get('/config');
+    expect(c.body).toMatchObject({ trialDays: 30, referral: { rate: 0.2 }, supportWhatsApp: '' });
+
+    await login('own|owner@example.com');
+    await login('u7|user@example.com');
+    expect((await request(app).put('/admin/settings').set('authorization', 'Bearer u7|user@example.com').send({ trialDays: 9 })).status).toBe(403);
+
+    const put = await request(app)
+      .put('/admin/settings')
+      .set('authorization', 'Bearer own|owner@example.com')
+      .send({ supportWhatsApp: '01712345678', trialDays: 15, referralRate: 0.1, paymentNumbers: { bkash: '01700000000' }, telegramChatIds: ['987654321'] });
+    expect(put.status).toBe(200);
+
+    const after = await request(app).get('/config');
+    expect(after.body).toMatchObject({ supportWhatsApp: '01712345678', trialDays: 15, referral: { rate: 0.1 }, paymentNumbers: { bkash: '01700000000' } });
+    expect(after.body.telegramChatIds).toBeUndefined(); // never public
+  });
+
+  it('a new account uses the dashboard trial days; bad values are rejected', async () => {
+    await login('own|owner@example.com');
+    await request(app).put('/admin/settings').set('authorization', 'Bearer own|owner@example.com').send({ trialDays: 15 });
+    const r = await login('n1|new@example.com');
+    const days = (Date.parse(r.body.user.subscription.expiresAt) - Date.now()) / 86_400_000;
+    expect(Math.round(days)).toBe(15);
+    const bad = await request(app).put('/admin/settings').set('authorization', 'Bearer own|owner@example.com').send({ telegramChatIds: ['abc'] });
+    expect(bad.status).toBe(400);
   });
 });
