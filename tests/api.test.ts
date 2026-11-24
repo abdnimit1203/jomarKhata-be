@@ -283,3 +283,12 @@ describe('admin search & user extras', () => {
     expect(p.body.user.referrerType).toBe('promoter');
   });
 });
+
+describe('admin link for Telegram', () => {
+  it('uses ADMIN_URL, else the live frontend from CORS_ORIGINS + /admin', async () => {
+    const { adminUrl } = await import('../src/config.js');
+    expect(adminUrl({ ADMIN_URL: 'https://x.app/admin/', CORS_ORIGINS: '' })).toBe('https://x.app/admin');
+    expect(adminUrl({ ADMIN_URL: '', CORS_ORIGINS: 'http://localhost:3000,https://jk.vercel.app' })).toBe('https://jk.vercel.app/admin');
+    expect(adminUrl({ ADMIN_URL: '', CORS_ORIGINS: 'http://localhost:3000' })).toBe('http://localhost:3000/admin');
+  });
+});

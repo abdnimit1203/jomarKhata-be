@@ -18,7 +18,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { z } from 'zod';
-import { list, type Config } from './config.js';
+import { adminUrl, list, type Config } from './config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
 import type { Telegram } from './lib/telegram.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
@@ -83,6 +83,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
 
+  const ADMIN = adminUrl(config); // for one-tap links in Telegram alerts
   const superAdmins = new Set(list(config.SUPER_ADMIN_EMAILS).map((e) => e.toLowerCase()));
   // env values only seed the settings until the owner edits them in the dashboard
   const settings = () => getSettings({ trialDays: config.TRIAL_DAYS, telegramChatIds: list(config.TELEGRAM_ADMIN_CHAT_ID) });
@@ -163,7 +164,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
         }),
       )) as unknown as UserDoc;
       created = true;
-      const link = config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${user.accountId}` : '';
+      const link = ADMIN ? `\n${ADMIN}/users/${user.accountId}` : '';
       await telegram.notify(`🆕 নতুন অ্যাকাউন্ট: ${user.accountId}\n${email}${referredBy ? `\nরেফারেল: ${code}` : ''}${link}`, s.telegramChatIds);
     } else {
       if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে।' });
@@ -200,7 +201,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     const updated = (await User.findOneAndUpdate({ _id: user._id, referredBy: null }, { $set: { referredBy: ref._id } }, { new: true })) as UserDoc | null;
     if (!updated) return res.status(409).json({ error: 'already_set', message: 'রেফারেল কোড আগেই যোগ করা হয়েছে।' });
     const s = await settings();
-    const link = config.ADMIN_URL ? `\n${config.ADMIN_URL}/users/${updated.accountId}` : '';
+    const link = ADMIN ? `\n${ADMIN}/users/${updated.accountId}` : '';
     await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})${link}`, s.telegramChatIds);
     res.json({ user: publicUser(updated, { referredUsers: await referredCount(updated) }), serverTime: new Date().toISOString() });
   });
@@ -245,13 +246,13 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   registerPaymentRoutes(app, [requireToken, requireUser] as never, [requireToken, requireUser, requireSuperAdmin] as never, {
     telegram,
     settings,
-    adminUrl: config.ADMIN_URL,
+    adminUrl: ADMIN,
   });
 
   registerAdminRoutes(app, [requireToken, requireUser, requireSuperAdmin] as never, {
     telegram,
     chatIds: async () => (await settings()).telegramChatIds,
-    adminUrl: config.ADMIN_URL,
+    adminUrl: ADMIN,
   });
 
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));

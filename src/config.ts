@@ -44,6 +44,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return parsed.data;
 }
 
+/**
+ * Admin panel URL for Telegram links. ADMIN_URL if set; otherwise the first non-localhost
+ * frontend in CORS_ORIGINS + "/admin" (so production needs no extra variable).
+ */
+export function adminUrl(config: Pick<Config, 'ADMIN_URL' | 'CORS_ORIGINS'>): string {
+  if (config.ADMIN_URL) return config.ADMIN_URL.replace(/\/$/, '');
+  const origins = list(config.CORS_ORIGINS);
+  const live = origins.find((o) => !/localhost|127\.0\.0\.1/.test(o)) ?? origins[0] ?? '';
+  return live ? `${live.replace(/\/$/, '')}/admin` : '';
+}
+
 export const list = (csv: string) =>
   csv
     .split(',')
