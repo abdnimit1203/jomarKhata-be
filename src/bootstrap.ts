@@ -1,19 +1,30 @@
 /**
  * Builds the app once per process: config → Firebase Admin → MongoDB → Express.
- * Used by both entry points:
- *   - src/index.ts   a normal long-running server (Render / Railway / VPS, and `npm run dev`)
- *   - api/index.ts   a Vercel serverless function (free hosting; one instance may serve many requests)
- * The MongoDB connection is reused between requests on a warm instance.
+ * Used by src/index.ts — Vercel zero-config (default export) and a normal server (`npm run dev` /
+ * `npm start`). The MongoDB connection is reused between requests on a warm instance.
  */
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import dns from 'node:dns';
 import mongoose from 'mongoose';
-import { createApp } from './app.js';
+import { createApp } from './createApp.js';
 import { loadConfig } from './config.js';
 import { makeTelegram } from './lib/telegram.js';
 
 let ready: Promise<ReturnType<typeof createApp>> | null = null;
+
+/**
+ * The PEM key as pasted into a hosting dashboard often keeps the .env quotes or real line breaks
+ * (dashboards don't parse like dotenv). Tolerate stray whitespace, wrapping quotes, CRLF and
+ * literal "\n" sequences.
+ */
+export function cleanPrivateKey(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^"|"$/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\\n/g, '\n');
+}
 
 /**
  * `mongodb+srv://` needs a DNS SRV lookup. Some ISPs' DNS refuse it (seen in Bangladesh:
@@ -40,7 +51,7 @@ async function init() {
       credential: cert({
         projectId: config.FIREBASE_PROJECT_ID,
         clientEmail: config.FIREBASE_CLIENT_EMAIL,
-        privateKey: config.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        privateKey: cleanPrivateKey(config.FIREBASE_PRIVATE_KEY),
       }),
     });
   }

@@ -16,15 +16,15 @@ npm test                # API tests (in-memory MongoDB, fake tokens; no internet
 
 ## Production
 
-**Free start: Vercel** (a separate Vercel project for this repo)
-- `vercel.json` runs `npm run build` (src → dist) and `api/index.js` (plain JS) serves every path from `dist/`, so Vercel never compiles TypeScript itself and there is no sleeping server.
-- Steps:
-  1. Vercel → Add New → Project → import this repo (no build settings needed).
-  2. Add every variable from `.env` in Settings → Environment Variables.
-  3. Deploy, then open `https://<project>.vercel.app/health`.
-  4. Put that URL in the frontend's `NEXT_PUBLIC_API_URL` (Vercel env of jomarKhata-fe) and add the frontend URL to `CORS_ORIGINS` here.
-- MongoDB Atlas → Network Access: allow `0.0.0.0/0`, because Vercel has no fixed IP.
-- Note: the Vercel Hobby plan is for non-commercial use. When the app earns, move to Vercel Pro or a small server.
+**Free start: Vercel** (a separate Vercel project for this repo) — **zero-config Express**
+- No `api/` folder and no `vercel.json`: Vercel imports `src/index.ts` and uses its **default export** (the Express app). `app.listen()` is skipped when `process.env.VERCEL` is set.
+- Deploy rules learnt the hard way (see the owner's Vercel guide): TypeScript pinned to **5.x**; `overrides: { "jose": "5.10.0" }` (firebase-admin → jwks-rsa → jose 6 is ESM-only and crashes the function with `FUNCTION_INVOCATION_FAILED`); Node **24.x**.
+- Steps: Vercel → Add New → Project → this repo → add the variables from `.env` (no `PORT`) → Deploy → open `/health`.
+- `FIREBASE_PRIVATE_KEY`: paste it as-is; quotes, real line breaks or literal `
+` are all accepted (`cleanPrivateKey`).
+- A 500 after a green build → Project → **Logs** (runtime), not the build log.
+- MongoDB Atlas → Network Access: allow `0.0.0.0/0` (Vercel has no fixed IP).
+- The Vercel Hobby plan is for non-commercial use. When the app earns, move to Vercel Pro or a small server.
 
 **Any normal server** (Render, Railway, a VPS): run `npm run build && npm start` (entry: `src/index.ts`) with the same variables.
 

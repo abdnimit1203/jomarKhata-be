@@ -6,7 +6,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createApp, type VerifyToken } from '../src/app.js';
+import { createApp, type VerifyToken } from '../src/createApp.js';
 import { loadConfig } from '../src/config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from '../src/lib/ids.js';
 import { User } from '../src/models/User.js';
@@ -290,5 +290,24 @@ describe('admin link for Telegram', () => {
     expect(adminUrl({ ADMIN_URL: 'https://x.app/admin/', CORS_ORIGINS: '' })).toBe('https://x.app/admin');
     expect(adminUrl({ ADMIN_URL: '', CORS_ORIGINS: 'http://localhost:3000,https://jk.vercel.app' })).toBe('https://jk.vercel.app/admin');
     expect(adminUrl({ ADMIN_URL: '', CORS_ORIGINS: 'http://localhost:3000' })).toBe('http://localhost:3000/admin');
+  });
+});
+
+describe('Vercel deploy safety', () => {
+  it('private key survives dashboard pastes (quotes, CRLF, literal \n, spaces)', async () => {
+    const { cleanPrivateKey } = await import('../src/bootstrap.js');
+    const want = '-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n';
+    expect(cleanPrivateKey('"-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n"')).toBe(want);
+    expect(cleanPrivateKey('  -----BEGIN PRIVATE KEY-----\r\nABC\r\n-----END PRIVATE KEY-----\r\n ')).toBe(want.trimEnd());
+  });
+  it('zero-config entry: src/index.ts default-exports an Express app; no api/ or vercel.json', async () => {
+    const fs = await import('node:fs');
+    expect(fs.existsSync('api')).toBe(false);
+    expect(fs.existsSync('vercel.json')).toBe(false);
+    expect(fs.readFileSync('src/index.ts', 'utf8')).toMatch(/export default app;/);
+    expect(fs.readFileSync('src/index.ts', 'utf8')).toMatch(/!process\.env\.VERCEL/);
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    expect(pkg.overrides.jose).toBe('5.10.0');
+    expect(pkg.devDependencies.typescript).toMatch(/^\^?5\./);
   });
 });
