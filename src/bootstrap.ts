@@ -19,8 +19,8 @@ let ready: Promise<ReturnType<typeof createApp>> | null = null;
  * `mongodb+srv://` needs a DNS SRV lookup. Some ISPs' DNS refuse it (seen in Bangladesh:
  * "querySrv ECONNREFUSED"). In that case retry once through public DNS (Cloudflare, Google).
  */
-async function connectDb(uri: string) {
-  const opts = { serverSelectionTimeoutMS: 10_000, maxPoolSize: 5 };
+async function connectDb(uri: string, dbName: string) {
+  const opts = { dbName, serverSelectionTimeoutMS: 10_000, maxPoolSize: 5 };
   try {
     await mongoose.connect(uri, opts);
   } catch (err) {
@@ -30,7 +30,7 @@ async function connectDb(uri: string) {
     dns.setServers(['1.1.1.1', '8.8.8.8']);
     await mongoose.connect(uri, opts);
   }
-  console.log('[db] connected');
+  console.log(`[db] connected (${dbName})`);
 }
 
 async function init() {
@@ -44,7 +44,7 @@ async function init() {
       }),
     });
   }
-  if (mongoose.connection.readyState !== 1) await connectDb(config.MONGODB_URI);
+  if (mongoose.connection.readyState !== 1) await connectDb(config.MONGODB_URI, config.MONGODB_DB_NAME);
   const auth = getAuth();
   return createApp({
     config,

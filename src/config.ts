@@ -12,6 +12,8 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required (MongoDB Atlas connection string)'),
+  /** Database inside the cluster (case-sensitive). Used even when the URI names none. */
+  MONGODB_DB_NAME: z.string().min(1).default('JomarKhata'),
 
   FIREBASE_PROJECT_ID: z.string().min(1, 'FIREBASE_PROJECT_ID is required'),
   FIREBASE_CLIENT_EMAIL: z.string().min(1, 'FIREBASE_CLIENT_EMAIL is required'),
