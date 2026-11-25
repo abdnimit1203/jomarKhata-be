@@ -76,7 +76,8 @@ export function registerReportRoutes(
           ['App', d.appVersion],
         ],
         body: d.message.slice(0, 500),
-        button: deps.adminUrl ? { text: 'View report', url: `${deps.adminUrl}/reports` } : undefined,
+        // one tap opens THIS report (highlighted) in the admin panel
+        button: deps.adminUrl ? { text: 'View report', url: `${deps.adminUrl}/reports?id=${doc._id}` } : undefined,
       },
       s.telegramChatIds,
     );

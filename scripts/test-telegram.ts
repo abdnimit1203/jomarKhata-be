@@ -47,7 +47,7 @@ const samples: Record<string, Alert> = {
     title: '🐞 NEW ISSUE REPORT (TEST)',
     rows: [['Name', 'Rahim'], ['User ID', 'JK-4821-0937'], ['Phone', '01711000000'], ['Page', '/app · sales'], ['App', '0.4.0']],
     body: 'বিক্রি সেভ করলে কিছু হয় না',
-    button: { text: 'View report', url: `${ADMIN}/reports` },
+    button: { text: 'View report', url: `${ADMIN}/reports?id=sample` },
   },
 };
 
