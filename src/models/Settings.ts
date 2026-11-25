@@ -80,10 +80,10 @@ export const DEFAULT_PLANS: Plan[] = [
 
 export const DEFAULT_TUTORIALS: TutorialVideo[] = [
   { title: 'জমারখাতা কী?', url: 'https://youtube.com/shorts/u9SRRsnLCVA' },
-  { title: 'ফোনে ইনস্টল আর খাতা খোলা', url: '' },
-  { title: 'বিক্রি লেখা', url: 'https://youtube.com/shorts/T9aNWPitceE' },
-  { title: 'বাকির হিসাব', url: 'https://youtube.com/shorts/g-W9wEQuml0' },
-  { title: 'পুরো টিউটোরিয়াল', url: 'https://youtube.com/shorts/W9l7I4PHLw0' },
+  { title: 'ফোনে ইনস্টল আর খাতা খোলা', url: 'https://youtube.com/shorts/T9aNWPitceE' },
+  { title: 'বিক্রি লেখা', url: 'https://youtube.com/shorts/g-W9wEQuml0' },
+  { title: 'বাকির হিসাব', url: 'https://youtube.com/shorts/W9l7I4PHLw0' },
+  { title: 'পুরো টিউটোরিয়াল', url: 'https://youtube.com/shorts/9U2TcBv50LM' },
 ];
 
 /** Current settings; created with defaults on first use. `fallback` fills from env until edited. */
