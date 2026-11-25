@@ -1,6 +1,8 @@
 /**
  * Sends a SAMPLE alert to the Telegram chats in the dashboard settings, to check how messages look.
- * Nothing is written to the database. Run: npx tsx scripts/test-telegram.ts [payment|user|report]
+ * Nothing is written to the database. Run: npx tsx scripts/test-telegram.ts [payment|user|report] [admin URL]
+ * Telegram shows the "View" BUTTON only for an https link; pass the live admin URL to see it,
+ * e.g. https://jomarkhata.vercel.app/admin (localhost → plain text link).
  */
 import 'dotenv/config';
 import * as dns from 'node:dns';
@@ -18,7 +20,7 @@ try {
   await mongoose.connect(config.MONGODB_URI, opts);
 }
 const s = await getSettings({ telegramChatIds: list(config.TELEGRAM_ADMIN_CHAT_ID) });
-const ADMIN = adminUrl(config);
+const ADMIN = (process.argv[3] ?? adminUrl(config)).replace(/\/$/, '');
 const kind = process.argv[2] ?? 'payment';
 
 const samples: Record<string, Alert> = {
