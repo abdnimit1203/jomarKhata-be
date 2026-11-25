@@ -24,11 +24,13 @@ import { z } from 'zod';
 import { adminUrl, list, type Config } from './config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
 import { contactRow, type Telegram } from './lib/telegram.js';
+import { makeImageKit, type ImageKitApi } from './lib/imagekit.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
 import { canAddReferral, publicUser, User, type UserDoc } from './models/User.js';
 import { registerAdminRoutes, subscriptionStatus } from './routes/admin.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerReportRoutes } from './routes/reports.js';
+import { registerUploadRoutes } from './routes/uploads.js';
 import { backupBodyParser, registerBackupRoutes } from './routes/backup.js';
 
 /** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
@@ -47,6 +49,8 @@ interface Deps {
   config: Config;
   verifyToken: VerifyToken;
   telegram: Telegram;
+  /** Tests pass a fake (no network). */
+  imagekit?: ImageKitApi;
 }
 
 type AuthedRequest = Request & { token?: VerifiedToken; user?: UserDoc };
@@ -65,7 +69,6 @@ async function withUniqueRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
 }
 
 const providerName = (p: string) => (p === 'google.com' ? 'Google' : p === 'password' ? 'Email' : p || '—');
-const QR_IMAGE = z.string().max(400_000, 'QR ছবি অনেক বড়').regex(/^(data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+)?$/, 'QR ছবি ঠিক নেই');
 const TELEGRAM_CHAT_ID = /^-?\d{3,20}$/;
 const settingsInput = z
   .object({
@@ -76,7 +79,6 @@ const settingsInput = z
     referralRate: z.number().min(0).max(1),
     paymentNumbers: z.object({ bkash: z.string().max(40), nagad: z.string().max(40), bank: z.string().max(200) }).partial(),
     telegramChatIds: z.array(z.string().trim().regex(TELEGRAM_CHAT_ID, 'Telegram chat ID সংখ্যা হতে হবে')).max(10),
-    paymentQr: z.object({ bkash: QR_IMAGE, nagad: QR_IMAGE, bank: QR_IMAGE }).partial(),
     tutorialVideos: z
       .array(z.object({ title: z.string().trim().min(1).max(80), url: z.union([z.literal(''), z.string().trim().url().max(300)]) }))
       .max(12),
@@ -96,16 +98,15 @@ const settingsInput = z
   })
   .partial();
 
-export function createApp({ config, verifyToken, telegram }: Deps) {
+export function createApp({ config, verifyToken, telegram, imagekit = makeImageKit(config) }: Deps) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
   app.use(securityHeaders);
   app.use(cors({ origin: list(config.CORS_ORIGINS), credentials: false }));
   app.use('/me/backup', backupBodyParser); // the khata copy may be a few MB
-  app.use('/admin/settings', express.json({ limit: '2mb' })); // three QR images
   app.use(express.json({ limit: '1mb' }));
-  app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
+  app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false, skip: () => config.NODE_ENV === 'test' }));
 
   const ADMIN = adminUrl(config); // for one-tap links in Telegram alerts
   const superAdmins = new Set(list(config.SUPER_ADMIN_EMAILS).map((e) => e.toLowerCase()));
@@ -168,16 +169,10 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
       supportEmail: s.supportEmail,
       bugReportEnabled: s.bugReportEnabled,
       trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers,
+      paymentQr: s.paymentQr,
       plans: s.plans,
       tutorialVideos: s.tutorialVideos.filter((v) => v.url),
     });
-  });
-
-  /** The QR images are larger, so only the renew screen asks for them. */
-  app.get('/config/payment-qr', async (_req, res) => {
-    const s = await settings();
-    res.set('cache-control', 'public, max-age=300');
-    res.json({ paymentQr: s.paymentQr });
   });
 
   app.post('/auth/session', requireToken, async (req: AuthedRequest, res) => {
@@ -315,7 +310,6 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
       ...current,
       ...parsed.data,
       paymentNumbers: { ...current.paymentNumbers, ...(parsed.data.paymentNumbers ?? {}) },
-      paymentQr: { ...current.paymentQr, ...(parsed.data.paymentQr ?? {}) },
     };
     await Settings.updateOne({ _id: 'global' }, { $set: { ...next, updatedBy: req.user!.email } }, { upsert: true });
     res.json({ settings: next });
@@ -328,6 +322,8 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   });
 
   registerBackupRoutes(app, [requireToken, requireUser] as never);
+
+  registerUploadRoutes(app, [requireToken, requireUser] as never, requireSuperAdmin as never, { imagekit, settings });
 
   registerReportRoutes(app, optionalUser as never, [requireToken, requireUser, requireSuperAdmin] as never, {
     telegram,

@@ -20,6 +20,7 @@ const verifyToken: VerifyToken = async (t) => {
   return { uid, email: email || undefined, email_verified: true, firebase: { sign_in_provider: provider || 'password' } };
 };
 const config = loadConfig({
+  NODE_ENV: 'test',
   MONGODB_URI: 'unused',
   FIREBASE_PROJECT_ID: 'x',
   FIREBASE_CLIENT_EMAIL: 'x',
@@ -28,7 +29,15 @@ const config = loadConfig({
   TRIAL_DAYS: '30',
   TELEGRAM_ADMIN_CHAT_ID: '12345',
 } as NodeJS.ProcessEnv);
-const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: async (a: Alert) => void sent.push(renderAlert(a).text) } });
+const deleted: string[] = [];
+const EP = 'https://ik.imagekit.io/test';
+const imagekit = {
+  enabled: true,
+  authParams: () => ({ token: 't', expire: 1, signature: 's', publicKey: 'pk' }),
+  isOurFile: (url: string, folder: string) => url.startsWith(`${EP}/jomarkhata${folder}/`),
+  deleteFile: async (id: string | null | undefined) => void (id && deleted.push(id)),
+};
+const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: async (a: Alert) => void sent.push(renderAlert(a).text) }, imagekit });
 const login = (token: string, body: object = {}) => request(app).post('/auth/session').set('authorization', `Bearer ${token}`).send(body);
 
 beforeAll(async () => {
@@ -323,22 +332,49 @@ describe('bug reports', () => {
   });
 });
 
-describe('plans, QR and tutorial videos from settings', () => {
-  it('defaults: true savings on 6m/12m; owner can set a list price, badge, QR and video links', async () => {
-    await request(app).put('/admin/settings').set('authorization', 'Bearer owner|owner@example.com').send({});
+describe('plans and tutorial videos from settings', () => {
+  it('defaults: true savings on 6m/12m; owner can set a list price and badge; empty video links hidden', async () => {
     await login('owner|owner@example.com');
     const admin = { authorization: 'Bearer owner|owner@example.com' };
     await mongoose.connection.collection('settings').deleteMany({});
     const cfg = await request(app).get('/config');
     expect(cfg.body.plans[1]).toMatchObject({ key: '6m', price: 999, listPrice: 1194 });
-    expect(cfg.body.paymentQr).toBeUndefined(); // kept out of the light /config
-    expect(cfg.body.tutorialVideos.every((v: { url: string }) => v.url)).toBe(true); // empty links hidden
-    const qr = 'data:image/png;base64,iVBORw0KGgo=';
+    expect(cfg.body.paymentQr).toEqual({ bkash: '', nagad: '' });
+    expect(cfg.body.tutorialVideos.every((v: { url: string }) => v.url)).toBe(true);
     const plans = [{ key: '1m', label: '১ মাস', days: 30, price: 199, listPrice: 250, badge: 'লঞ্চ অফার' }];
-    expect((await request(app).put('/admin/settings').set(admin).send({ paymentQr: { bkash: 'javascript:alert(1)' } })).status).toBe(400);
-    expect((await request(app).put('/admin/settings').set(admin).send({ plans, paymentQr: { bkash: qr } })).status).toBe(200);
+    expect((await request(app).put('/admin/settings').set(admin).send({ plans })).status).toBe(200);
     expect((await request(app).get('/config')).body.plans[0]).toMatchObject({ listPrice: 250, badge: 'লঞ্চ অফার' });
-    expect((await request(app).get('/config/payment-qr')).body.paymentQr).toMatchObject({ bkash: qr, nagad: '' });
+  });
+});
+
+describe('image uploads (ImageKit)', () => {
+  it('avatar: signed params up to 5 a day; only our folder; the replaced photo is deleted', async () => {
+    deleted.length = 0;
+    await login('a1|a1@example.com');
+    const auth = { authorization: 'Bearer a1|a1@example.com' };
+    for (let i = 0; i < 5; i++) expect((await request(app).get('/uploads/imagekit-auth?purpose=avatar').set(auth)).status).toBe(200);
+    expect((await request(app).get('/uploads/imagekit-auth?purpose=avatar').set(auth)).status).toBe(429);
+    expect((await request(app).put('/me/avatar').set(auth).send({ url: 'https://evil.example.com/x.jpg', fileId: 'x' })).status).toBe(400);
+    await request(app).put('/me/avatar').set(auth).send({ url: `${EP}/jomarkhata/avatars/a.jpg`, fileId: 'f1' });
+    await request(app).put('/me/avatar').set(auth).send({ url: `${EP}/jomarkhata/avatars/b.jpg`, fileId: 'f2' });
+    expect(deleted).toEqual(['f1']);
+    expect((await request(app).get('/me').set(auth)).body.user.avatarUrl).toBe(`${EP}/jomarkhata/avatars/b.jpg`);
+    await request(app).put('/me/avatar').set(auth).send({ url: '' });
+    expect(deleted).toEqual(['f1', 'f2']);
+  });
+
+  it('payment QR: super admin only; shows in /config; replaced QR deleted', async () => {
+    deleted.length = 0;
+    await login('owner|owner@example.com');
+    await login('u9|u9@example.com');
+    const admin = { authorization: 'Bearer owner|owner@example.com' };
+    expect((await request(app).get('/uploads/imagekit-auth?purpose=qr').set({ authorization: 'Bearer u9|u9@example.com' })).status).toBe(403);
+    expect((await request(app).get('/uploads/imagekit-auth?purpose=qr').set(admin)).status).toBe(200);
+    expect((await request(app).put('/admin/payment-qr').set({ authorization: 'Bearer u9|u9@example.com' }).send({ method: 'bkash', url: '' })).status).toBe(403);
+    await request(app).put('/admin/payment-qr').set(admin).send({ method: 'bkash', url: `${EP}/jomarkhata/payment-qr/q1.png`, fileId: 'q1' });
+    await request(app).put('/admin/payment-qr').set(admin).send({ method: 'bkash', url: `${EP}/jomarkhata/payment-qr/q2.png`, fileId: 'q2' });
+    expect(deleted).toEqual(['q1']);
+    expect((await request(app).get('/config')).body.paymentQr.bkash).toBe(`${EP}/jomarkhata/payment-qr/q2.png`);
   });
 });
 

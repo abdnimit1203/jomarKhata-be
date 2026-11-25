@@ -26,10 +26,14 @@ const settingsSchema = new Schema(
       default: undefined,
     },
     /** QR images for the renew screen, as small data URLs (PNG/JPEG, resized in the admin panel). */
+    /** QR images on ImageKit (/jomarkhata/payment-qr) + fileIds (a replaced QR is deleted). */
     paymentQr: {
       bkash: { type: String, default: '' },
       nagad: { type: String, default: '' },
-      bank: { type: String, default: '' },
+    },
+    paymentQrFileIds: {
+      bkash: { type: String, default: '' },
+      nagad: { type: String, default: '' },
     },
     /** Tutorial videos (YouTube links) shown on the landing page and in the app. */
     tutorialVideos: { type: [{ _id: false, title: String, url: String }], default: undefined },
@@ -49,7 +53,8 @@ export interface SettingsValue {
   trialDays: number;
   referralRate: number;
   paymentNumbers: { bkash: string; nagad: string; bank: string };
-  paymentQr: { bkash: string; nagad: string; bank: string };
+  paymentQr: { bkash: string; nagad: string };
+  paymentQrFileIds: { bkash: string; nagad: string };
   telegramChatIds: string[];
   plans: Plan[];
   tutorialVideos: TutorialVideo[];
@@ -96,7 +101,8 @@ export async function getSettings(fallback: Partial<SettingsValue> = {}): Promis
     trialDays: doc?.trialDays ?? fallback.trialDays ?? 30,
     referralRate: doc?.referralRate ?? fallback.referralRate ?? 0.2,
     paymentNumbers: { bkash: '', nagad: '', bank: '', ...(doc?.paymentNumbers ?? {}) },
-    paymentQr: { bkash: '', nagad: '', bank: '', ...(doc?.paymentQr ?? {}) },
+    paymentQr: { bkash: '', nagad: '', ...(doc?.paymentQr ?? {}) },
+    paymentQrFileIds: { bkash: '', nagad: '', ...(doc?.paymentQrFileIds ?? {}) },
     tutorialVideos: doc?.tutorialVideos?.length ? doc.tutorialVideos : DEFAULT_TUTORIALS,
     telegramChatIds: doc?.telegramChatIds?.length ? doc.telegramChatIds : (fallback.telegramChatIds ?? []),
     plans: doc?.plans?.length ? doc.plans : DEFAULT_PLANS,

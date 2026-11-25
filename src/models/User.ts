@@ -23,6 +23,11 @@ const userSchema = new Schema(
     phone: { type: String, default: '' },
     shopName: { type: String, default: '' },
     ownerName: { type: String, default: '' },
+    /** Profile photo on ImageKit (+ its fileId so a replaced photo is deleted). */
+    avatarUrl: { type: String, default: '' },
+    avatarFileId: { type: String, default: '' },
+    /** Upload signatures handed out today (limit against filling the free plan). */
+    avatarUploads: { day: { type: String, default: '' }, count: { type: Number, default: 0 } },
     /** How they sign in: 'google.com' or 'password' (from the Firebase token). */
     signInProvider: { type: String, default: '' },
     role: { type: String, enum: ['user', 'super_admin'], default: 'user' },
@@ -58,6 +63,7 @@ export function publicUser(u: UserDoc, stats: { referredUsers: number }) {
     displayName: u.displayName,
     phone: u.phone || undefined,
     shopName: u.shopName,
+    avatarUrl: u.avatarUrl || undefined,
     role: u.role,
     referralCode: u.referralCode,
     referralStats: {

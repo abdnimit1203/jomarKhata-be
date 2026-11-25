@@ -29,6 +29,10 @@ const schema = z.object({
   /** Optional: new-account / payment alerts to Telegram. Leave empty to turn off. */
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   TELEGRAM_ADMIN_CHAT_ID: z.string().default(''),
+  /** ImageKit (same account as the owner's other shop; files under /jomarkhata). Empty = uploads off. */
+  IMAGEKIT_PUBLIC_KEY: z.string().default(''),
+  IMAGEKIT_PRIVATE_KEY: z.string().default(''),
+  IMAGEKIT_URL_ENDPOINT: z.string().default(''),
   /** Public URL of the admin panel, used in Telegram links (e.g. https://your-domain/admin). */
   ADMIN_URL: z.string().default(''),
 });
