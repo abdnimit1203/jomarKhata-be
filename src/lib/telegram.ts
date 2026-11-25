@@ -67,7 +67,11 @@ export function makeTelegram(config: Pick<Config, 'TELEGRAM_BOT_TOKEN'>) {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ chat_id, parse_mode: 'HTML', disable_web_page_preview: true, ...msg }),
             signal: AbortSignal.timeout(4000),
-          }).catch((err: unknown) => console.warn('[telegram] send failed:', err instanceof Error ? err.message : err)),
+          })
+            .then(async (res) => {
+              if (!res.ok) console.warn(`[telegram] chat ${chat_id}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+            })
+            .catch((err: unknown) => console.warn('[telegram] send failed:', err instanceof Error ? err.message : err)),
         ),
       );
     },

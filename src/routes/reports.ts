@@ -12,7 +12,7 @@ import { rateLimit } from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import { searchRegex } from '../lib/search.js';
-import { contactRow, type Telegram } from '../lib/telegram.js';
+import type { Telegram } from '../lib/telegram.js';
 import { BugReport } from '../models/BugReport.js';
 import type { SettingsValue } from '../models/Settings.js';
 import type { UserDoc } from '../models/User.js';
@@ -23,6 +23,11 @@ const reportInput = z.object({
   message: z.string().trim().min(3, 'সমস্যাটা একটু লিখুন').max(1000, 'একটু ছোট করে লিখুন'),
   page: z.string().trim().max(120).default(''),
   appVersion: z.string().trim().max(40).default(''),
+  // filled from the phone's shop profile (works offline, and for guests)
+  shopName: z.string().trim().max(120).default(''),
+  reporterName: z.string().trim().max(120).default(''),
+  reporterPhone: z.string().trim().max(30).default(''),
+  writtenAt: z.coerce.date().optional(),
 });
 
 type Req = { user?: UserDoc; params: Record<string, string>; body: unknown; query: Record<string, unknown> };
@@ -42,21 +47,35 @@ export function registerReportRoutes(
     if (!s.bugReportEnabled) return res.status(403).json({ error: 'disabled', message: 'এখন রিপোর্ট নেওয়া বন্ধ আছে।' });
     const parsed = reportInput.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'invalid', message: parsed.error.issues[0]?.message ?? 'তথ্য ঠিক নেই।' });
+    const d = parsed.data;
+    const name = d.reporterName || user?.ownerName || user?.displayName || '';
+    const phone = d.reporterPhone || user?.phone || '';
+    const shop = d.shopName || user?.shopName || '';
     const doc = await BugReport.create({
       userId: user?._id ?? null,
       accountId: user?.accountId ?? '',
       email: user?.email ?? '',
-      shopName: user?.shopName ?? '',
-      ...parsed.data,
+      message: d.message,
+      page: d.page,
+      appVersion: d.appVersion,
+      shopName: shop,
+      reporterName: name,
+      reporterPhone: phone,
+      writtenAt: d.writtenAt ?? null,
       userAgent: (req.get('user-agent') ?? '').slice(0, 300),
     });
     await deps.telegram.notify(
       {
         title: '🐞 NEW ISSUE REPORT',
-        rows: user
-          ? [['Name', user.shopName || user.displayName || '—'], ['User ID', user.accountId], contactRow(user), ['Page', parsed.data.page], ['App', parsed.data.appVersion]]
-          : [['From', 'Guest (not signed in)'], ['Page', parsed.data.page], ['App', parsed.data.appVersion]],
-        body: parsed.data.message.slice(0, 500),
+        rows: [
+          ['Shop', shop || '—'],
+          ['Name', name],
+          ['Phone', phone],
+          ...(user ? [['User ID', user.accountId] as [string, string], ['Email', user.email] as [string, string]] : [['From', 'Guest (not signed in)'] as [string, string]]),
+          ['Page', d.page],
+          ['App', d.appVersion],
+        ],
+        body: d.message.slice(0, 500),
         button: deps.adminUrl ? { text: 'View report', url: `${deps.adminUrl}/reports` } : undefined,
       },
       s.telegramChatIds,

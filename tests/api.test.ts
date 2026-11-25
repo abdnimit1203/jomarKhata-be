@@ -299,9 +299,10 @@ describe('bug reports', () => {
   it('guest and signed-in users can report; admin lists and resolves; owner can turn it off', async () => {
     await login('owner|owner@example.com');
     await login('r1|r1@example.com');
-    const guest = await request(app).post('/reports').send({ message: 'বিক্রি সেভ হয় না', page: '/app · sales', appVersion: '0.3.1' });
+    const guest = await request(app).post('/reports').send({ message: 'বিক্রি সেভ হয় না', page: '/app · sales', appVersion: '0.3.1', shopName: 'করিম স্টোর', reporterName: 'করিম', reporterPhone: '01811000000' });
     expect(guest.status).toBe(201);
     expect(sent.at(-1)).toMatch(/Guest/);
+    expect(sent.at(-1)).toMatch(/01811000000/);
     const signed = await request(app).post('/reports').set('authorization', 'Bearer r1|r1@example.com').send({ message: 'রিপোর্ট খোলে না' });
     expect(signed.status).toBe(201);
     expect(sent.at(-1)).toMatch(/r1@example.com/);

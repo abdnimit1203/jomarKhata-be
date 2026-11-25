@@ -10,6 +10,11 @@ const bugReportSchema = new Schema(
     accountId: { type: String, default: '' },
     email: { type: String, default: '' },
     shopName: { type: String, default: '' },
+    /** Who wrote it, as filled in on the phone (owner name, mobile) — also for guests. */
+    reporterName: { type: String, default: '' },
+    reporterPhone: { type: String, default: '' },
+    /** Written offline and sent later: when it was written on the phone. */
+    writtenAt: { type: Date, default: null },
     message: { type: String, required: true },
     /** App screen it was sent from (e.g. "/app · sales"). */
     page: { type: String, default: '' },
