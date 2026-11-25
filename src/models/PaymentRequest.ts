@@ -19,11 +19,15 @@ const paymentSchema = new Schema(
     payerNumber: { type: String, default: '' },
     trxId: { type: String, required: true, trim: true },
     note: { type: String, default: '' },
-    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending', index: true },
+    status: { type: String, enum: ['pending', 'approved', 'rejected', 'revoked'], default: 'pending', index: true },
     decidedBy: { type: String, default: '' },
     decidedAt: { type: Date, default: null },
     reason: { type: String, default: '' },
     expiresAtAfter: { type: Date, default: null },
+    /** The user's subscription just before approval, so an approval can be undone exactly. */
+    subscriptionBefore: { status: String, plan: String, expiresAt: Date },
+    revokedBy: { type: String, default: '' },
+    revokedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

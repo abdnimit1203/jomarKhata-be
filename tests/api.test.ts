@@ -10,6 +10,7 @@ import { createApp, type VerifyToken } from '../src/createApp.js';
 import { loadConfig } from '../src/config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from '../src/lib/ids.js';
 import { User } from '../src/models/User.js';
+import { renderAlert, type Alert } from '../src/lib/telegram.js';
 
 let mongo: MongoMemoryServer;
 const sent: string[] = [];
@@ -27,7 +28,7 @@ const config = loadConfig({
   TRIAL_DAYS: '30',
   TELEGRAM_ADMIN_CHAT_ID: '12345',
 } as NodeJS.ProcessEnv);
-const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: async (t: string) => void sent.push(t) } });
+const app = createApp({ config, verifyToken, telegram: { enabled: true, notify: async (a: Alert) => void sent.push(renderAlert(a).text) } });
 const login = (token: string, body: object = {}) => request(app).post('/auth/session').set('authorization', `Bearer ${token}`).send(body);
 
 beforeAll(async () => {
@@ -68,7 +69,8 @@ describe('auth', () => {
     expect(r1.body.user.referralCode).toMatch(/^JK/);
     const days = (Date.parse(r1.body.user.subscription.expiresAt) - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(29.9);
-    expect(sent[0]).toContain('নতুন অ্যাকাউন্ট');
+    expect(sent[0]).toContain('NEW USER');
+    expect(sent[0]).toContain(r1.body.user.accountId);
 
     const r2 = await login('u1|shop@example.com');
     expect(r2.status).toBe(200);
@@ -235,7 +237,7 @@ describe('payments: request → approve / reject', () => {
     const r = await request(app).post('/me/payments').set(auth).send({ plan: '6m', method: 'bkash', trxId: 'trx9abc', amount: 1 });
     expect(r.status).toBe(201);
     expect(r.body.request).toMatchObject({ amount: 999, days: 180, trxId: 'TRX9ABC', status: 'pending' }); // client "amount" ignored
-    expect(sent.some((t) => t.includes('নতুন পেমেন্ট রিকোয়েস্ট'))).toBe(true);
+    expect(sent.some((t) => t.includes('NEW PAYMENT REQUEST') && t.includes('TRX9ABC') && t.includes('pay@example.com'))).toBe(true);
     expect((await request(app).post('/me/payments').set(auth).send({ plan: '1m', method: 'bkash', trxId: 'TRX9ABC' })).status).toBe(409);
 
     const list = await request(app).get('/admin/payments').set(admin);
@@ -248,6 +250,15 @@ describe('payments: request → approve / reject', () => {
     const me = await request(app).get('/me').set(auth);
     expect(Math.round((Date.parse(me.body.user.subscription.expiresAt) - before) / 86_400_000)).toBe(180);
     expect(me.body.user.subscription.status).toBe('active');
+
+    // undo the approval (wrong click): back to exactly the trial it was, logged
+    expect((await request(app).post(`/admin/payments/${id}/revoke`).set(admin).send({})).status).toBe(400);
+    const rv = await request(app).post(`/admin/payments/${id}/revoke`).set(admin).send({ reason: 'ভুল করে' });
+    expect(rv.body.request.status).toBe('revoked');
+    const back = await request(app).get('/me').set(auth);
+    expect(Date.parse(back.body.user.subscription.expiresAt)).toBe(before);
+    expect(back.body.user.subscription.status).toBe('trial');
+    expect((await request(app).post(`/admin/payments/${id}/revoke`).set(admin).send({ reason: 'x' })).status).toBe(409);
   });
 
   it('reject needs a reason; non-admin cannot list', async () => {
@@ -281,6 +292,65 @@ describe('admin search & user extras', () => {
     expect(id.ownerName).toBe('রহিম');
     const p = await request(app).post(`/admin/users/${id.accountId}/referrer-type`).set(admin).send({ referrerType: 'promoter' });
     expect(p.body.user.referrerType).toBe('promoter');
+  });
+});
+
+describe('bug reports', () => {
+  it('guest and signed-in users can report; admin lists and resolves; owner can turn it off', async () => {
+    await login('owner|owner@example.com');
+    await login('r1|r1@example.com');
+    const guest = await request(app).post('/reports').send({ message: 'বিক্রি সেভ হয় না', page: '/app · sales', appVersion: '0.3.1' });
+    expect(guest.status).toBe(201);
+    expect(sent.at(-1)).toMatch(/Guest/);
+    const signed = await request(app).post('/reports').set('authorization', 'Bearer r1|r1@example.com').send({ message: 'রিপোর্ট খোলে না' });
+    expect(signed.status).toBe(201);
+    expect(sent.at(-1)).toMatch(/r1@example.com/);
+    expect((await request(app).post('/reports').send({ message: 'x' })).status).toBe(400);
+
+    expect((await request(app).get('/admin/reports').set('authorization', 'Bearer r1|r1@example.com')).status).toBe(403);
+    const list = await request(app).get('/admin/reports').set('authorization', 'Bearer owner|owner@example.com');
+    expect(list.body.open).toBe(2);
+    const id = list.body.reports.find((r: { email: string }) => r.email === 'r1@example.com')._id;
+    const done = await request(app).post(`/admin/reports/${id}/status`).set('authorization', 'Bearer owner|owner@example.com').send({ status: 'resolved' });
+    expect(done.body.report.resolvedBy).toBe('owner@example.com');
+
+    await request(app).put('/admin/settings').set('authorization', 'Bearer owner|owner@example.com').send({ bugReportEnabled: false, supportEmail: 'help@example.com' });
+    const cfg = await request(app).get('/config');
+    expect(cfg.body).toMatchObject({ bugReportEnabled: false, supportEmail: 'help@example.com' });
+    expect((await request(app).post('/reports').send({ message: 'আবার সমস্যা' })).status).toBe(403);
+    await request(app).put('/admin/settings').set('authorization', 'Bearer owner|owner@example.com').send({ bugReportEnabled: true });
+  });
+});
+
+describe('cloud backup', () => {
+  it('save, meta, restore; the old copy is kept as previous; needs login', async () => {
+    await login('c1|c1@example.com');
+    const auth = { authorization: 'Bearer c1|c1@example.com' };
+    expect((await request(app).get('/me/backup/meta')).status).toBe(401);
+    expect((await request(app).get('/me/backup/meta').set(auth)).body).toEqual({ exists: false });
+    expect((await request(app).get('/me/backup').set(auth)).status).toBe(404);
+    const big = 'x'.repeat(1_500_000); // over the general 1 MB limit, under the backup limit
+    const put = await request(app).put('/me/backup').set(auth).send({ encoding: 'plain', payload: big, size: big.length, shopName: 'রহিম স্টোর' });
+    expect(put.status).toBe(200);
+    await request(app).put('/me/backup').set(auth).send({ encoding: 'plain', payload: '{"second":true}', size: 15 });
+    const meta = await request(app).get('/me/backup/meta').set(auth);
+    expect(meta.body).toMatchObject({ exists: true, size: 15 });
+    const got = await request(app).get('/me/backup').set(auth);
+    expect(got.body.payload).toBe('{"second":true}');
+    const doc = await mongoose.connection.collection('cloudbackups').findOne({});
+    expect(doc?.previous?.payload.length).toBe(1_500_000);
+  });
+});
+
+describe('telegram message look', () => {
+  it('bold title, one fact per line, View button (text link on localhost)', () => {
+    const a: Alert = { title: '🆕 NEW USER', rows: [['Name', 'Rahim <Store>'], ['User ID', 'JK-1234-5678'], ['Phone', '']], button: { text: 'View user', url: 'https://jk.app/admin/users/JK-1234-5678' } };
+    const live = renderAlert(a);
+    expect(live.text).toBe(['<b>🆕 NEW USER</b>', '', 'Name: <b>Rahim &lt;Store&gt;</b>', 'User ID: <b>JK-1234-5678</b>'].join('\n'));
+    expect(live.reply_markup).toEqual({ inline_keyboard: [[{ text: 'View user ↗', url: 'https://jk.app/admin/users/JK-1234-5678' }]] });
+    const local = renderAlert({ ...a, button: { text: 'View user', url: 'http://localhost:3000/admin/users/x' } });
+    expect(local.reply_markup).toBeUndefined();
+    expect(local.text).toContain('View user: http://localhost:3000/admin/users/x');
   });
 });
 

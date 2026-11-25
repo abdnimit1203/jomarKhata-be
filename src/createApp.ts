@@ -12,6 +12,8 @@
  *   GET  /admin/me              super admin only (the /admin panel checks this)
  *   GET  /admin/settings        super admin: changeable values
  *   PUT  /admin/settings        super admin: update them (no env / code change needed)
+ *   PUT/GET /me/backup          cloud copy of the khata — see routes/backup.ts
+ *   POST /reports               bug report from the app (signed in or guest)  — see routes/reports.ts
  */
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -21,11 +23,13 @@ import { securityHeaders } from './lib/securityHeaders.js';
 import { z } from 'zod';
 import { adminUrl, list, type Config } from './config.js';
 import { newAccountId, newReferralCode, normalizeReferralCode } from './lib/ids.js';
-import type { Telegram } from './lib/telegram.js';
+import { contactRow, type Telegram } from './lib/telegram.js';
 import { getSettings, Settings, type SettingsValue } from './models/Settings.js';
 import { canAddReferral, publicUser, User, type UserDoc } from './models/User.js';
 import { registerAdminRoutes, subscriptionStatus } from './routes/admin.js';
 import { registerPaymentRoutes } from './routes/payments.js';
+import { registerReportRoutes } from './routes/reports.js';
+import { backupBodyParser, registerBackupRoutes } from './routes/backup.js';
 
 /** Result of verifying a Firebase ID token (firebase-admin in production, a fake in tests). */
 export interface VerifiedToken {
@@ -60,10 +64,13 @@ async function withUniqueRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
   }
 }
 
+const providerName = (p: string) => (p === 'google.com' ? 'Google' : p === 'password' ? 'Email' : p || '—');
 const TELEGRAM_CHAT_ID = /^-?\d{3,20}$/;
 const settingsInput = z
   .object({
     supportWhatsApp: z.string().trim().max(20),
+    supportEmail: z.union([z.literal(''), z.string().trim().email('ইমেল ঠিকভাবে লিখুন').max(120)]),
+    bugReportEnabled: z.boolean(),
     trialDays: z.number().int().min(0).max(365),
     referralRate: z.number().min(0).max(1),
     paymentNumbers: z.object({ bkash: z.string().max(40), nagad: z.string().max(40), bank: z.string().max(200) }).partial(),
@@ -81,6 +88,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   app.set('trust proxy', 1);
   app.use(securityHeaders);
   app.use(cors({ origin: list(config.CORS_ORIGINS), credentials: false }));
+  app.use('/me/backup', backupBodyParser); // the khata copy may be a few MB
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
 
@@ -111,6 +119,20 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     next();
   };
 
+  /** Signed-in users AND guests may send a bug report: a valid token attaches the account, none is fine. */
+  const optionalUser = async (req: AuthedRequest, _res: Response, next: NextFunction) => {
+    const header = req.get('authorization') ?? '';
+    if (header.startsWith('Bearer ')) {
+      try {
+        req.token = await verifyToken(header.slice(7));
+        req.user = ((await User.findOne({ firebaseUid: req.token.uid })) as UserDoc | null) ?? undefined;
+      } catch {
+        /* expired token: report anyway, just without the account */
+      }
+    }
+    next();
+  };
+
   const requireSuperAdmin = (req: AuthedRequest, res: Response, next: NextFunction) => {
     if (req.user!.role !== 'super_admin') return res.status(403).json({ error: 'forbidden' });
     next();
@@ -126,7 +148,13 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   app.get('/config', async (_req, res) => {
     const s = await settings();
     res.set('cache-control', 'public, max-age=300');
-    res.json({ supportWhatsApp: s.supportWhatsApp, trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers, plans: s.plans });
+    res.json({
+      supportWhatsApp: s.supportWhatsApp,
+      supportEmail: s.supportEmail,
+      bugReportEnabled: s.bugReportEnabled,
+      trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers,
+      plans: s.plans,
+    });
   });
 
   app.post('/auth/session', requireToken, async (req: AuthedRequest, res) => {
@@ -165,8 +193,21 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
         }),
       )) as unknown as UserDoc;
       created = true;
-      const link = ADMIN ? `\n${ADMIN}/users/${user.accountId}` : '';
-      await telegram.notify(`🆕 নতুন অ্যাকাউন্ট: ${user.accountId}\n${email}${referredBy ? `\nরেফারেল: ${code}` : ''}${link}`, s.telegramChatIds);
+      await telegram.notify(
+        {
+          title: '🆕 NEW USER',
+          rows: [
+            ['Name', user.displayName || '—'],
+            ['User ID', user.accountId],
+            contactRow(user),
+            ['Login', providerName(user.signInProvider)],
+            ['Referral code', referredBy ? code : ''],
+            ['Trial', `${s.trialDays} days`],
+          ],
+          button: ADMIN ? { text: 'View user', url: `${ADMIN}/users/${user.accountId}` } : undefined,
+        },
+        s.telegramChatIds,
+      );
     } else {
       if (user.status === 'blocked') return res.status(403).json({ error: 'blocked', message: 'এই অ্যাকাউন্ট বন্ধ আছে।' });
       user.lastSeenAt = new Date();
@@ -199,11 +240,23 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
     if (!ref) return res.status(404).json({ error: 'unknown_code', message: 'এই রেফারেল কোড পাওয়া যায়নি।' });
     if (String(ref._id) === String(user._id)) return res.status(400).json({ error: 'own_code', message: 'নিজের কোড দেওয়া যাবে না।' });
     // set once, atomically (a second request can't overwrite it)
-    const updated = (await User.findOneAndUpdate({ _id: user._id, referredBy: null }, { $set: { referredBy: ref._id } }, { new: true })) as UserDoc | null;
+    const updated = (await User.findOneAndUpdate({ _id: user._id, referredBy: null }, { $set: { referredBy: ref._id } }, { returnDocument: 'after' })) as UserDoc | null;
     if (!updated) return res.status(409).json({ error: 'already_set', message: 'রেফারেল কোড আগেই যোগ করা হয়েছে।' });
     const s = await settings();
-    const link = ADMIN ? `\n${ADMIN}/users/${updated.accountId}` : '';
-    await telegram.notify(`🎁 রেফারেল যোগ হলো: ${updated.accountId} ← ${code} (${ref.accountId})${link}`, s.telegramChatIds);
+    await telegram.notify(
+      {
+        title: '🎁 REFERRAL ADDED',
+        rows: [
+          ['Name', updated.shopName || updated.displayName || '—'],
+          ['User ID', updated.accountId],
+          contactRow(updated),
+          ['Referred by', `${ref.shopName || ref.displayName || ref.email} (${ref.accountId})`],
+          ['Code', code],
+        ],
+        button: ADMIN ? { text: 'View user', url: `${ADMIN}/users/${updated.accountId}` } : undefined,
+      },
+      s.telegramChatIds,
+    );
     res.json({ user: publicUser(updated, { referredUsers: await referredCount(updated) }), serverTime: new Date().toISOString() });
   });
 
@@ -245,6 +298,14 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   });
 
   registerPaymentRoutes(app, [requireToken, requireUser] as never, [requireToken, requireUser, requireSuperAdmin] as never, {
+    telegram,
+    settings,
+    adminUrl: ADMIN,
+  });
+
+  registerBackupRoutes(app, [requireToken, requireUser] as never);
+
+  registerReportRoutes(app, optionalUser as never, [requireToken, requireUser, requireSuperAdmin] as never, {
     telegram,
     settings,
     adminUrl: ADMIN,

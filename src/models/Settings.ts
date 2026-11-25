@@ -9,6 +9,10 @@ const settingsSchema = new Schema(
   {
     _id: { type: String, default: 'global' },
     supportWhatsApp: { type: String, default: '' },
+    /** Helpline email shown in the app's settings (empty = hidden). */
+    supportEmail: { type: String, default: '' },
+    /** Floating "সমস্যা জানান" button in the app; the owner turns it off from the dashboard. */
+    bugReportEnabled: { type: Boolean, default: true },
     trialDays: { type: Number, default: 30, min: 0, max: 365 },
     referralRate: { type: Number, default: 0.2, min: 0, max: 1 },
     paymentNumbers: {
@@ -32,6 +36,8 @@ export const Settings = mongoose.models.Settings ?? mongoose.model('Settings', s
 
 export interface SettingsValue {
   supportWhatsApp: string;
+  supportEmail: string;
+  bugReportEnabled: boolean;
   trialDays: number;
   referralRate: number;
   paymentNumbers: { bkash: string; nagad: string; bank: string };
@@ -57,6 +63,8 @@ export async function getSettings(fallback: Partial<SettingsValue> = {}): Promis
   const doc = (await Settings.findById('global').lean()) as Partial<SettingsValue> | null;
   return {
     supportWhatsApp: doc?.supportWhatsApp ?? fallback.supportWhatsApp ?? '',
+    supportEmail: doc?.supportEmail ?? fallback.supportEmail ?? '',
+    bugReportEnabled: doc?.bugReportEnabled ?? fallback.bugReportEnabled ?? true,
     trialDays: doc?.trialDays ?? fallback.trialDays ?? 30,
     referralRate: doc?.referralRate ?? fallback.referralRate ?? 0.2,
     paymentNumbers: { bkash: '', nagad: '', bank: '', ...(doc?.paymentNumbers ?? {}) },

@@ -9,7 +9,7 @@
 import type { Express, RequestHandler } from 'express';
 import { z } from 'zod';
 import { searchRegex } from '../lib/search.js';
-import type { Telegram } from '../lib/telegram.js';
+import { contactRow, type Telegram } from '../lib/telegram.js';
 import { SubscriptionLog } from '../models/SubscriptionLog.js';
 import { User, type UserDoc } from '../models/User.js';
 
@@ -46,6 +46,9 @@ function row(u: UserDoc) {
  * Extend a subscription by `days`, ON TOP of the remaining time (nobody loses paid days), and log it.
  * Shared by the manual admin action and payment approval.
  */
+/** dd/MM/yyyy (owner's date rule), Dhaka time. */
+export const ddmmyyyy = (d: Date) => d.toLocaleDateString('en-GB', { timeZone: 'Asia/Dhaka' });
+
 export async function extendSubscription(
   u: UserDoc,
   days: number,
@@ -172,9 +175,22 @@ export function registerAdminRoutes(
     const a = action.data;
     if (a.action === 'extend') {
       const after = await extendSubscription(u, a.days, a.plan, adminEmail, pay.data);
-      const taka = pay.data.amount ? ` · ৳${pay.data.amount}${pay.data.method ? ` (${pay.data.method})` : ''}` : '';
-      const link = deps.adminUrl ? `\n${deps.adminUrl}/users/${u.accountId}` : '';
-      await deps.telegram.notify(`✅ সাবস্ক্রিপশন: ${u.accountId} → ${after.toISOString().slice(0, 10)} পর্যন্ত${taka}${link}`, await deps.chatIds());
+      await deps.telegram.notify(
+        {
+          title: '✅ SUBSCRIPTION GIVEN',
+          rows: [
+            ['Name', u.shopName || u.displayName || '—'],
+            ['User ID', u.accountId],
+            contactRow(u),
+            ['Added', `${a.days} days`],
+            ['Valid until', ddmmyyyy(after)],
+            ['Amount', pay.data.amount ? `৳${pay.data.amount}${pay.data.method ? ` (${pay.data.method})` : ''}` : ''],
+            ['By', adminEmail],
+          ],
+          button: deps.adminUrl ? { text: 'View user', url: `${deps.adminUrl}/users/${u.accountId}` } : undefined,
+        },
+        await deps.chatIds(),
+      );
       return res.json({ user: row((await User.findById(u._id)) as UserDoc) });
     }
     let after: Date;
@@ -199,7 +215,7 @@ export function registerAdminRoutes(
   app.post('/admin/users/:accountId/referrer-type', ...guard, async (req, res) => {
     const parsed = z.object({ referrerType: z.enum(['regular', 'promoter']) }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'invalid' });
-    const u = (await User.findOneAndUpdate({ accountId: req.params.accountId }, { $set: { referrerType: parsed.data.referrerType } }, { new: true })) as UserDoc | null;
+    const u = (await User.findOneAndUpdate({ accountId: req.params.accountId }, { $set: { referrerType: parsed.data.referrerType } }, { returnDocument: 'after' })) as UserDoc | null;
     if (!u) return res.status(404).json({ error: 'not_found' });
     res.json({ user: row(u) });
   });

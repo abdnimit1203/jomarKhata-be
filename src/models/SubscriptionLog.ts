@@ -8,7 +8,7 @@ const logSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     accountId: { type: String, required: true, index: true },
-    action: { type: String, enum: ['extend', 'set_date', 'expire'], required: true },
+    action: { type: String, enum: ['extend', 'set_date', 'expire', 'revoke'], required: true },
     plan: { type: String, default: '' },
     days: { type: Number, default: 0 },
     before: { type: Date, required: true },

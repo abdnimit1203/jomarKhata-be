@@ -6,6 +6,8 @@ import 'dotenv/config';
 import dns from 'node:dns';
 import mongoose from 'mongoose';
 import { loadConfig } from '../src/config.js';
+import { BugReport } from '../src/models/BugReport.js';
+import { CloudBackup } from '../src/models/CloudBackup.js';
 import { Settings } from '../src/models/Settings.js';
 import { User } from '../src/models/User.js';
 
@@ -18,6 +20,8 @@ try {
   await mongoose.connect(config.MONGODB_URI, opts);
 }
 await User.init(); // creates "users" + unique indexes (firebaseUid, accountId, referralCode)
+await BugReport.init();
+await CloudBackup.init();
 await Settings.updateOne(
   { _id: 'global' },
   { $setOnInsert: { supportWhatsApp: '', trialDays: config.TRIAL_DAYS, referralRate: 0.2, paymentNumbers: { bkash: '', nagad: '', bank: '' }, telegramChatIds: [], updatedBy: 'init' } },
