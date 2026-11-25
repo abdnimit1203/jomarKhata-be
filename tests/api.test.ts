@@ -323,6 +323,25 @@ describe('bug reports', () => {
   });
 });
 
+describe('plans, QR and tutorial videos from settings', () => {
+  it('defaults: true savings on 6m/12m; owner can set a list price, badge, QR and video links', async () => {
+    await request(app).put('/admin/settings').set('authorization', 'Bearer owner|owner@example.com').send({});
+    await login('owner|owner@example.com');
+    const admin = { authorization: 'Bearer owner|owner@example.com' };
+    await mongoose.connection.collection('settings').deleteMany({});
+    const cfg = await request(app).get('/config');
+    expect(cfg.body.plans[1]).toMatchObject({ key: '6m', price: 999, listPrice: 1194 });
+    expect(cfg.body.paymentQr).toBeUndefined(); // kept out of the light /config
+    expect(cfg.body.tutorialVideos.every((v: { url: string }) => v.url)).toBe(true); // empty links hidden
+    const qr = 'data:image/png;base64,iVBORw0KGgo=';
+    const plans = [{ key: '1m', label: '১ মাস', days: 30, price: 199, listPrice: 250, badge: 'লঞ্চ অফার' }];
+    expect((await request(app).put('/admin/settings').set(admin).send({ paymentQr: { bkash: 'javascript:alert(1)' } })).status).toBe(400);
+    expect((await request(app).put('/admin/settings').set(admin).send({ plans, paymentQr: { bkash: qr } })).status).toBe(200);
+    expect((await request(app).get('/config')).body.plans[0]).toMatchObject({ listPrice: 250, badge: 'লঞ্চ অফার' });
+    expect((await request(app).get('/config/payment-qr')).body.paymentQr).toMatchObject({ bkash: qr, nagad: '' });
+  });
+});
+
 describe('cloud backup', () => {
   it('save, meta, restore; the old copy is kept as previous; needs login', async () => {
     await login('c1|c1@example.com');

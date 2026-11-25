@@ -65,6 +65,7 @@ async function withUniqueRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
 }
 
 const providerName = (p: string) => (p === 'google.com' ? 'Google' : p === 'password' ? 'Email' : p || '—');
+const QR_IMAGE = z.string().max(400_000, 'QR ছবি অনেক বড়').regex(/^(data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+)?$/, 'QR ছবি ঠিক নেই');
 const TELEGRAM_CHAT_ID = /^-?\d{3,20}$/;
 const settingsInput = z
   .object({
@@ -75,8 +76,21 @@ const settingsInput = z
     referralRate: z.number().min(0).max(1),
     paymentNumbers: z.object({ bkash: z.string().max(40), nagad: z.string().max(40), bank: z.string().max(200) }).partial(),
     telegramChatIds: z.array(z.string().trim().regex(TELEGRAM_CHAT_ID, 'Telegram chat ID সংখ্যা হতে হবে')).max(10),
+    paymentQr: z.object({ bkash: QR_IMAGE, nagad: QR_IMAGE, bank: QR_IMAGE }).partial(),
+    tutorialVideos: z
+      .array(z.object({ title: z.string().trim().min(1).max(80), url: z.union([z.literal(''), z.string().trim().url().max(300)]) }))
+      .max(12),
     plans: z
-      .array(z.object({ key: z.string().trim().min(1).max(20), label: z.string().trim().min(1).max(40), days: z.number().int().min(1).max(3650), price: z.number().min(0).max(1_000_000) }))
+      .array(
+        z.object({
+          key: z.string().trim().min(1).max(20),
+          label: z.string().trim().min(1).max(40),
+          days: z.number().int().min(1).max(3650),
+          price: z.number().min(0).max(1_000_000),
+          listPrice: z.number().min(0).max(1_000_000).optional(),
+          badge: z.string().trim().max(30).optional(),
+        }),
+      )
       .min(1)
       .max(10),
   })
@@ -89,6 +103,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
   app.use(securityHeaders);
   app.use(cors({ origin: list(config.CORS_ORIGINS), credentials: false }));
   app.use('/me/backup', backupBodyParser); // the khata copy may be a few MB
+  app.use('/admin/settings', express.json({ limit: '2mb' })); // three QR images
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }));
 
@@ -154,7 +169,15 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
       bugReportEnabled: s.bugReportEnabled,
       trialDays: s.trialDays, referral: { rate: s.referralRate }, paymentNumbers: s.paymentNumbers,
       plans: s.plans,
+      tutorialVideos: s.tutorialVideos.filter((v) => v.url),
     });
+  });
+
+  /** The QR images are larger, so only the renew screen asks for them. */
+  app.get('/config/payment-qr', async (_req, res) => {
+    const s = await settings();
+    res.set('cache-control', 'public, max-age=300');
+    res.json({ paymentQr: s.paymentQr });
   });
 
   app.post('/auth/session', requireToken, async (req: AuthedRequest, res) => {
@@ -292,6 +315,7 @@ export function createApp({ config, verifyToken, telegram }: Deps) {
       ...current,
       ...parsed.data,
       paymentNumbers: { ...current.paymentNumbers, ...(parsed.data.paymentNumbers ?? {}) },
+      paymentQr: { ...current.paymentQr, ...(parsed.data.paymentQr ?? {}) },
     };
     await Settings.updateOne({ _id: 'global' }, { $set: { ...next, updatedBy: req.user!.email } }, { upsert: true });
     res.json({ settings: next });
